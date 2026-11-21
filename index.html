@@ -96,16 +96,44 @@ h1{font-size:24px;margin:4px 0 6px;font-weight:700;text-align:center}
 .nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:64px;font-size:30px;background:#0006;border-radius:10px;z-index:2}
 #prev{left:6px}#next{right:6px}
 
-/* ---------- Réglages / fenêtres ---------- */
-#sets{background:#000;z-index:15;overflow-y:auto}
-.grp{margin:8px 14px 18px;background:var(--card);border-radius:14px;overflow:hidden}
-.grp h4{margin:0;padding:14px 16px 4px;color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
-.row{display:flex;align-items:center;gap:12px;padding:14px 16px;border-top:1px solid #ffffff10;width:100%;text-align:left;font-size:16px}
-.grp h4+.row{border-top:0}
-.row span{flex:1}
-.row em{font-style:normal;color:var(--mut);font-size:14px}
-.row.d{color:var(--red)}
-.note{color:var(--mut);font-size:13px;line-height:1.45;padding:0 18px 10px}
+/* ---------- Réglages ---------- */
+#sets{background:#000;z-index:15}
+#sets.on{display:block;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.shead{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:6px;padding:calc(10px + env(safe-area-inset-top)) 10px 10px;background:#000d;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-bottom:1px solid #ffffff10}
+.shead h2{margin:0;font-size:20px;font-weight:700;flex:1;text-align:center;padding-right:44px}
+.sback{width:44px;height:40px;font-size:30px;line-height:1;color:var(--gold);display:grid;place-items:center}
+.swrap{max-width:560px;margin:0 auto;padding:14px 16px calc(40px + env(safe-area-inset-bottom))}
+.hero{display:flex;align-items:center;gap:14px;padding:18px;border-radius:20px;background:linear-gradient(140deg,#1f2b4d,#121726 60%,#0d0f15);border:1px solid #ffffff14;margin-bottom:22px}
+.hero .hi{width:54px;height:54px;flex:0 0 54px;border-radius:16px;display:grid;place-items:center;font-size:28px;background:linear-gradient(145deg,#f5d77a,#b8860b);box-shadow:0 6px 18px #b8860b55}
+.hero b{display:block;font-size:18px}
+.hero small{color:#aab;font-size:13.5px}
+.meter{height:6px;border-radius:6px;background:#ffffff1a;margin-top:8px;overflow:hidden}
+.meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,#f5d77a,#d4a937);border-radius:6px}
+.sec{margin:0 0 22px}
+.sec>h4{margin:0 4px 8px;color:var(--mut);font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.card{background:var(--card);border-radius:16px;overflow:hidden}
+.it{display:flex;align-items:center;gap:12px;width:100%;min-height:54px;padding:10px 14px;text-align:left;font-size:16px;position:relative}
+.it+.it:before{content:'';position:absolute;top:0;left:56px;right:0;height:1px;background:#ffffff12}
+button.it:active{background:#ffffff0d}
+.ico{width:30px;height:30px;flex:0 0 30px;border-radius:8px;display:grid;place-items:center;font-size:16px}
+.ico.y{background:#e5b400}.ico.b{background:#0a84ff}.ico.g{background:#30d158}.ico.p{background:#5e5ce6}.ico.o{background:#ff9f0a}.ico.r{background:#ff453a}.ico.gr{background:#636366}.ico.t{background:#30b0c7}
+.it .lb{flex:1;min-width:0}
+.it .lb small{display:block;color:var(--mut);font-size:13px;margin-top:2px;line-height:1.3}
+.it .ch{color:#5a5a5e;font-size:22px;line-height:1}
+.it .vl{color:var(--mut);font-size:14px}
+.it.dg{color:var(--red)}
+.hide+.it:before{display:none}
+.seg{display:flex;background:#2c2c2e;border-radius:10px;padding:2px;margin:0 14px 12px}
+.seg button{flex:1;padding:8px 4px;border-radius:8px;font-size:13.5px;color:#ddd;font-weight:500}
+.seg button.on{background:#636366;color:#fff;font-weight:600;box-shadow:0 2px 6px #0006}
+.hint{color:var(--mut);font-size:13px;line-height:1.45;margin:8px 4px 0}
+.cloud{padding:16px;display:flex;gap:14px;align-items:flex-start}
+.cloud .ci{width:44px;height:44px;flex:0 0 44px;border-radius:12px;display:grid;place-items:center;font-size:22px;background:#0a84ff22}
+.cloud b{display:block;font-size:16px}
+.cloud small{display:block;color:var(--mut);font-size:13.5px;line-height:1.4;margin-top:3px}
+.cloud.on .ci{background:#30d15822}
+.cbtn{display:block;margin:0 16px 16px;width:calc(100% - 32px);padding:13px;border-radius:12px;background:linear-gradient(135deg,#f5d77a,#c9971f);color:#1a1200;font-weight:700;font-size:16px}
+.foot{color:#5a5a5e;font-size:12px;text-align:center;margin-top:8px;line-height:1.5}
 .mod{position:fixed;inset:0;background:#000b;display:none;align-items:flex-end;justify-content:center;z-index:50}
 .mod.on{display:flex}
 .box{background:var(--card);border-radius:20px 20px 0 0;padding:20px 18px calc(20px + env(safe-area-inset-bottom));width:100%;max-width:520px;animation:up .2s}
@@ -200,31 +228,49 @@ h1{font-size:24px;margin:4px 0 6px;font-weight:700;text-align:center}
 
 <!-- 6. Réglages -->
 <section id="sets" class="scr">
-  <div class="top"><button class="ib" id="sback">‹</button><h2>Réglages</h2></div>
-  <div class="grp"><h4>Sécurité</h4>
-    <button class="row" id="r_pin"><span>Changer le code secret</span><em>›</em></button>
-    <button class="row" id="r_mode"><span>Écran d'ouverture</span><em id="e_mode"></em></button>
-    <button class="row" id="r_auto"><span>Verrouillage automatique</span><em id="e_auto"></em></button>
+  <div class="shead"><button class="sback" id="sback" aria-label="Retour">‹</button><h2>Réglages</h2></div>
+  <div class="swrap">
+    <div class="hero">
+      <div class="hi">🔐</div>
+      <div style="flex:1;min-width:0"><b>Coffre protégé</b><small id="e_space">…</small><div class="meter"><i id="e_meter"></i></div></div>
+    </div>
+
+    <div class="sec"><h4>Ouverture du coffre</h4>
+      <div class="card">
+        <div class="it"><span class="ico y">🎭</span><span class="lb">Déguisement<small id="n_mode"></small></span></div>
+        <div class="seg" id="segMode"><button data-v="calc">📝 Bloc-notes</button><button data-v="lock">🔒 Écran de code</button></div>
+        <div class="it"><span class="ico p">⏱</span><span class="lb">Verrouillage automatique<small>Le coffre se referme tout seul</small></span></div>
+        <div class="seg" id="segAuto"><button data-v="0">Immédiat</button><button data-v="1">1 min</button><button data-v="5">5 min</button><button data-v="15">15 min</button></div>
+        <button class="it" id="r_pin"><span class="ico gr">🔑</span><span class="lb">Changer le code secret</span><span class="ch">›</span></button>
+      </div>
+    </div>
+
+    <div class="sec"><h4>Sauvegarde en ligne</h4>
+      <div class="card">
+        <div class="cloud" id="c_box"><div class="ci">☁️</div><div style="flex:1;min-width:0"><b id="c_state">Désactivée</b><small id="c_last">Activez-la pour ne rien perdre si vous changez de téléphone.</small></div></div>
+        <button class="cbtn" id="c_on">Activer la sauvegarde en ligne</button>
+        <button class="it hide" id="c_now"><span class="ico b">⟳</span><span class="lb">Synchroniser maintenant</span><span class="ch">›</span></button>
+        <button class="it hide" id="c_pull"><span class="ico t">⬇</span><span class="lb">Récupérer les fichiers manquants<small>Depuis votre sauvegarde en ligne</small></span><span class="ch">›</span></button>
+        <button class="it hide" id="c_off"><span class="ico gr">⏏</span><span class="lb">Se déconnecter</span><span class="ch">›</span></button>
+      </div>
+      <p class="hint">Tout part <b>déjà chiffré</b> : même le serveur ne peut pas voir vos fichiers. Sur un nouveau téléphone, choisissez « J'ai déjà un coffre sauvegardé en ligne ».</p>
+    </div>
+
+    <div class="sec"><h4>Sauvegarde dans un fichier</h4>
+      <div class="card">
+        <button class="it" id="r_bak"><span class="ico g">⬇</span><span class="lb">Créer une sauvegarde<small>Fichier chiffré à garder en lieu sûr</small></span><span class="ch">›</span></button>
+        <button class="it" id="r_res"><span class="ico o">⬆</span><span class="lb">Restaurer une sauvegarde</span><span class="ch">›</span></button>
+      </div>
+    </div>
+
+    <div class="sec"><h4>Zone sensible</h4>
+      <div class="card">
+        <button class="it dg hide" id="c_del"><span class="ico r">☁</span><span class="lb">Supprimer la sauvegarde en ligne</span></button>
+        <button class="it dg" id="r_wipe"><span class="ico r">🗑</span><span class="lb">Tout effacer de ce téléphone</span></button>
+      </div>
+    </div>
+    <p class="foot">Chiffrement AES-256 sur l'appareil<br>Seul votre code peut ouvrir ce coffre</p>
   </div>
-  <p class="note" id="n_mode"></p>
-  <div class="grp"><h4>Sauvegarde en ligne automatique</h4>
-    <div class="row"><span id="c_state">Désactivée</span><em id="c_last"></em></div>
-    <button class="row" id="c_on"><span>Activer la sauvegarde en ligne</span><em>☁️</em></button>
-    <button class="row hide" id="c_now"><span>Synchroniser maintenant</span><em>⟳</em></button>
-    <button class="row hide" id="c_pull"><span>Récupérer les fichiers en ligne manquants</span><em>⬇️</em></button>
-    <button class="row hide" id="c_off"><span>Se déconnecter de la sauvegarde</span><em>›</em></button>
-    <button class="row d hide" id="c_del"><span>Supprimer la sauvegarde en ligne</span></button>
-  </div>
-  <p class="note">Chaque fichier ajouté, renommé ou supprimé est envoyé automatiquement dans votre espace en ligne privé, <b>déjà chiffré</b> : même le serveur ne peut pas voir vos fichiers. Sur un nouveau téléphone : installez l'appli, puis « J'ai déjà un coffre sauvegardé en ligne ». La synchronisation se fait tant que le coffre est ouvert.</p>
-  <div class="grp"><h4>Sauvegarde dans un fichier</h4>
-    <button class="row" id="r_bak"><span>Créer une sauvegarde chiffrée</span><em>⬇️</em></button>
-    <button class="row" id="r_res"><span>Restaurer une sauvegarde</span><em>⬆️</em></button>
-  </div>
-  <p class="note">Vos fichiers sont rangés uniquement sur ce téléphone, chiffrés. Si vous effacez les données du navigateur ou désinstallez l'appli, ils sont perdus : faites une sauvegarde de temps en temps et gardez-la en lieu sûr. Elle reste chiffrée avec votre code.</p>
-  <div class="grp"><h4>Espace</h4>
-    <div class="row"><span>Espace utilisé</span><em id="e_space">…</em></div>
-  </div>
-  <div class="grp"><button class="row d" id="r_wipe"><span>Tout effacer</span></button></div>
   <input type="file" id="rin" class="hide">
 </section>
 
@@ -647,26 +693,28 @@ async function saveMeta(it) {
 }
 
 /* ---------- Réglages ---------- */
-const autoLab = a => a === 0 ? 'Dès que je quitte' : `Après ${a} min`;
 function drawSets() {
-  $('#e_mode').textContent = CFG.mode === 'calc' ? 'Bloc-notes 📝' : 'Code 🔒';
-  $('#n_mode').innerHTML = CFG.mode === 'calc' ? "Mode bloc-notes : l'appli ressemble à une appli de notes normale. Tapez <b>votre code dans « Rechercher »</b> pour ouvrir le coffre." : "Mode code : l'appli affiche directement l'écran de code.";
-  $('#e_auto').textContent = autoLab(CFG.auto);
+  document.querySelectorAll('#segMode button').forEach(b => b.classList.toggle('on', b.dataset.v === CFG.mode));
+  document.querySelectorAll('#segAuto button').forEach(b => b.classList.toggle('on', +b.dataset.v === CFG.auto));
+  $('#n_mode').innerHTML = CFG.mode === 'calc' ? "Ressemble à une appli de notes. Code à taper dans « Rechercher »." : "L'appli demande le code dès l'ouverture.";
 }
 $('#bset').onclick = async () => {
-  drawSets(); drawCloud(); show('sets');
-  let used = ITEMS.reduce((a, i) => a + i.size, 0), txt = size(used);
-  try { const e = await navigator.storage.estimate(); if (e.quota) txt += ' · ' + size(e.quota - e.usage) + ' libres'; } catch (e) {}
-  $('#e_space').textContent = txt;
+  drawSets(); drawCloud(); show('sets'); $('#sets').scrollTop = 0;
+  const used = ITEMS.reduce((a, i) => a + i.size, 0), c = { photo: 0, video: 0, doc: 0 }; ITEMS.forEach(i => c[i.kind]++);
+  const parts = [c.photo && `${c.photo} photo${c.photo > 1 ? 's' : ''}`, c.video && `${c.video} vidéo${c.video > 1 ? 's' : ''}`, c.doc && `${c.doc} doc${c.doc > 1 ? 's' : ''}`].filter(Boolean);
+  let txt = (parts.join(' · ') || 'Vide') + ' — ' + size(used), pct = 0;
+  try { const e = await navigator.storage.estimate(); if (e.quota) { pct = Math.min(100, e.usage / e.quota * 100); txt += ` sur ${size(e.quota)}`; } } catch (e) {}
+  $('#e_space').textContent = txt; $('#e_meter').style.width = Math.max(2, pct) + '%';
 };
 $('#sback').onclick = () => show('vault');
-$('#r_mode').onclick = async () => {
-  CFG.mode = CFG.mode === 'calc' ? 'lock' : 'calc'; await mset('cfg', CFG); drawSets();
+$('#segMode').onclick = async e => {
+  const b = e.target.closest('button'); if (!b || b.dataset.v === CFG.mode) return;
+  CFG.mode = b.dataset.v; await mset('cfg', CFG); drawSets();
   toast(CFG.mode === 'calc' ? 'Le coffre est caché dans le bloc-notes' : "Écran de code classique activé");
 };
-$('#r_auto').onclick = async () => {
-  const L = [0, 1, 5, 15], i = (L.indexOf(CFG.auto) + 1) % L.length;
-  CFG.auto = L[i]; await mset('cfg', CFG); drawSets(); bumpIdle();
+$('#segAuto').onclick = async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  CFG.auto = +b.dataset.v; await mset('cfg', CFG); drawSets(); bumpIdle();
 };
 $('#r_pin').onclick = async () => {
   const old = await ask({ title: 'Changer le code', text: 'Code actuel :', input: '', ph: '••••', ok: 'Suivant', pw: true });
@@ -856,8 +904,13 @@ function drawCloud() {
   const on = !!CS;
   $('#c_on').classList.toggle('hide', on);
   ['c_now', 'c_pull', 'c_off', 'c_del'].forEach(i => $('#' + i).classList.toggle('hide', !on));
-  $('#c_state').textContent = !on ? 'Désactivée' : cMsg || (cloudErr ? '⚠️ ' + cloudErr : '✅ Activée · ' + CS.email);
-  $('#c_last').textContent = on && CS.last && !cMsg ? 'à ' + new Date(CS.last).toLocaleTimeString('fr-BE', { hour: '2-digit', minute: '2-digit' }) : '';
+  $('#c_box').classList.toggle('on', on && !cloudErr);
+  $('#c_box .ci').textContent = !on ? '☁️' : cMsg ? '⏳' : cloudErr ? '⚠️' : '✅';
+  $('#c_state').textContent = !on ? 'Désactivée' : cMsg ? 'Synchronisation…' : cloudErr ? 'Problème de synchronisation' : 'Activée';
+  $('#c_last').textContent = !on ? 'Activez-la pour ne rien perdre si vous changez de téléphone.'
+    : cMsg ? cMsg
+    : cloudErr ? cloudErr
+    : CS.email + (CS.last ? ' · dernière synchro à ' + new Date(CS.last).toLocaleTimeString('fr-BE', { hour: '2-digit', minute: '2-digit' }) : '');
 }
 $('#bcloud').onclick = () => $('#bset').click();
 window.addEventListener('online', () => sync());
