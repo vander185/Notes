@@ -269,7 +269,7 @@ button.it:active{background:#ffffff0d}
         <button class="it dg" id="r_wipe"><span class="ico r">🗑</span><span class="lb">Tout effacer de ce téléphone</span></button>
       </div>
     </div>
-    <p class="foot">Chiffrement AES-256 sur l'appareil<br>Seul votre code peut ouvrir ce coffre</p>
+    <p class="foot">Chiffrement AES-256 sur l'appareil<br>Seul votre code peut ouvrir ce coffre<br>Version 3</p>
   </div>
   <input type="file" id="rin" class="hide">
 </section>
@@ -372,7 +372,11 @@ async function start() {
     return;
   }
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {});
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (!reloaded && !KEY) { reloaded = true; location.reload(); } });
+  }
   const c = await mget('cfg'); if (c) CFG = { ...CFG, ...c };
   const k = await mget('key');
   if (!k) return setupFlow();
