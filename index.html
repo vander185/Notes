@@ -96,6 +96,37 @@ h1{font-size:24px;margin:4px 0 6px;font-weight:700;text-align:center}
 .nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:64px;font-size:30px;background:#0006;border-radius:10px;z-index:2}
 #prev{left:6px}#next{right:6px}
 
+/* ---------- Sélection, albums, notes, feuilles ---------- */
+.tb{color:var(--gold);font-size:16px;padding:8px 6px;font-weight:600}
+.albums{display:flex;gap:8px;padding:0 14px 10px;overflow-x:auto;scrollbar-width:none}
+.albums::-webkit-scrollbar,.tabs::-webkit-scrollbar{display:none}
+.albums button{padding:6px 12px;border-radius:10px;background:#16161a;font-size:13px;color:#bbb;white-space:nowrap;border:1px solid #ffffff14}
+.albums button.on{border-color:var(--gold);color:#fff;background:#2a2410}
+.albums small{opacity:.6;margin-left:3px}
+.cell{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.selmode .cell::before{content:'';position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;border:2px solid #fff;background:#0005;z-index:2}
+.cell.sel::before{content:'✓'!important;background:var(--gold)!important;border-color:var(--gold)!important;color:#000;font-weight:800;font-size:14px;display:grid;place-items:center}
+.cell.sel img,.cell.sel .doc,.cell.sel .note{opacity:.55}
+.selbar{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-around;padding:10px 0 calc(12px + env(safe-area-inset-bottom));background:#111111ee;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-top:1px solid #ffffff14;z-index:4}
+.selbar button{display:flex;flex-direction:column;align-items:center;font-size:22px;gap:2px;min-width:80px}
+.selbar small{font-size:11px;color:#ccc}
+.cell .note{position:absolute;inset:0;background:linear-gradient(160deg,#fff7d1,#f2e09a);color:#3a3000;padding:10px;font-size:11.5px;line-height:1.3;overflow:hidden;white-space:pre-wrap;word-break:break-word}
+.cell .note b{display:block;font-size:13px;margin-bottom:4px}
+.sheet h3{margin:0 0 6px}
+.sheet .opt{display:flex;align-items:center;gap:14px;width:100%;padding:12px 2px;font-size:16px;text-align:left;border-top:1px solid #ffffff10}
+.sheet .opt:first-of-type{border-top:0}
+.sheet .opt .lb{flex:1}.sheet .opt small{display:block;color:var(--mut);font-size:13px;margin-top:2px}
+.sheet .opt.dg{color:var(--red)}
+.sheet .cancel{width:100%;margin-top:10px;padding:14px;border-radius:12px;background:var(--card2);font-weight:600;font-size:16px}
+#vnote{width:100%;height:100%;background:#fffbe6;color:#222;border:0;outline:none;resize:none;padding:18px;font:17px/1.5 -apple-system,system-ui,sans-serif}
+#vc img{touch-action:none;user-select:none;-webkit-user-drag:none;transform-origin:center;will-change:transform}
+.lg{display:flex;gap:10px;align-items:center;padding:10px 0;border-top:1px solid #ffffff10;font-size:14px}
+.lg:first-child{border-top:0}
+.lg img{width:54px;height:54px;border-radius:10px;object-fit:cover;background:#333}
+.lg small{display:block;color:var(--mut)}
+.intr{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 14px}
+.intr img{width:96px;height:96px;object-fit:cover;border-radius:12px}
+
 /* ---------- Réglages ---------- */
 #sets{background:#000;z-index:15}
 #sets.on{display:block;overflow-y:auto;-webkit-overflow-scrolling:touch}
@@ -176,6 +207,7 @@ button.it:active{background:#ffffff0d}
   <div class="dots" id="ldots"></div>
   <div class="pad" id="lpad"></div>
   <div class="msg" id="lmsg"></div>
+  <button class="link hide" id="lbio">👆 Utiliser l'empreinte / Face ID</button>
 </section>
 
 <!-- 3. Création du coffre -->
@@ -197,30 +229,42 @@ button.it:active{background:#ffffff0d}
 
 <!-- 4. Le coffre -->
 <section id="vault" class="scr">
-  <div class="top">
-    <h2>Mon coffre</h2>
+  <div class="top" id="vtop">
+    <h2 id="vtitle">Mon coffre</h2>
+    <button class="ib" id="bsel" aria-label="Sélectionner">☑️</button>
     <button class="ib" id="bcloud" aria-label="Sauvegarde en ligne">☁️<i class="off" id="cst">–</i></button>
     <button class="ib" id="bset" aria-label="Réglages">⚙️</button>
     <button class="ib" id="block" aria-label="Verrouiller">🔒</button>
+  </div>
+  <div class="top hide" id="stop">
+    <button class="tb" id="scancel">Annuler</button><h2 id="scount" style="text-align:center;font-size:17px">0 sélectionné</h2><button class="tb" id="sall">Tout</button>
   </div>
   <div class="tabs" id="tabs">
     <button data-t="all" class="on">Tout<small id="n_all"></small></button>
     <button data-t="photo">Photos<small id="n_photo"></small></button>
     <button data-t="video">Vidéos<small id="n_video"></small></button>
     <button data-t="doc">Documents<small id="n_doc"></small></button>
+    <button data-t="note">Notes<small id="n_note"></small></button>
   </div>
+  <div class="albums" id="albums"></div>
   <div id="grid"></div>
   <button class="fab" id="badd">＋ Ajouter</button>
+  <div class="selbar hide" id="selbar">
+    <button id="s_dl">⬇️<small>Enregistrer</small></button>
+    <button id="s_mv">📁<small>Déplacer</small></button>
+    <button id="s_del">🗑️<small>Supprimer</small></button>
+  </div>
   <input type="file" id="fin" multiple class="hide">
   <div class="bar hide" id="bar"><span id="bartxt"></span><div class="pr"><i id="barp"></i></div></div>
 </section>
 
 <!-- 5. Visionneuse -->
 <section id="view" class="scr">
-  <div class="vtop"><button class="ib" id="vclose">✕</button><div class="nm" id="vname"></div></div>
-  <div id="vbody"><button class="nav" id="prev">‹</button><button class="nav" id="next">›</button><div id="vc" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center"></div></div>
+  <div class="vtop"><button class="ib" id="vclose">✕</button><div class="nm" id="vname"></div><button class="tb hide" id="vsave">Enregistrer</button><button class="ib hide" id="vplay" aria-label="Diaporama">▶</button></div>
+  <div id="vbody"><button class="nav" id="prev">‹</button><button class="nav" id="next">›</button><div id="vc" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden"></div></div>
   <div class="vbot">
     <button id="vdl">⬇️<small>Enregistrer</small></button>
+    <button id="vmv">📁<small>Album</small></button>
     <button id="vren">✏️<small>Renommer</small></button>
     <button id="vdel">🗑️<small>Supprimer</small></button>
   </div>
@@ -242,10 +286,19 @@ button.it:active{background:#ffffff0d}
         <div class="it"><span class="ico p">⏱</span><span class="lb">Verrouillage automatique<small>Le coffre se referme tout seul</small></span></div>
         <div class="seg" id="segAuto"><button data-v="0">Immédiat</button><button data-v="1">1 min</button><button data-v="5">5 min</button><button data-v="15">15 min</button></div>
         <button class="it" id="r_pin"><span class="ico gr">🔑</span><span class="lb">Changer le code secret</span><span class="ch">›</span></button>
+        <button class="it" id="r_bio"><span class="ico g">👆</span><span class="lb">Empreinte / Face ID<small id="e_bio">Désactivé</small></span><span class="ch">›</span></button>
       </div>
     </div>
 
-    <div class="sec"><h4>Sauvegarde en ligne</h4>
+    <div class="sec" id="sec_prot"><h4>Protection</h4>
+      <div class="card">
+        <button class="it" id="r_decoy"><span class="ico p">🎭</span><span class="lb">Faux code<small id="e_decoy">Ouvre un faux coffre si on vous force</small></span><span class="ch">›</span></button>
+        <button class="it" id="r_intr"><span class="ico o">📸</span><span class="lb">Photo de l'intrus<small id="e_intr">Désactivée</small></span><span class="ch">›</span></button>
+        <button class="it" id="r_log"><span class="ico r">📜</span><span class="lb">Tentatives d'ouverture<small id="e_log">Aucune</small></span><span class="ch">›</span></button>
+      </div>
+    </div>
+
+    <div class="sec" id="sec_cloud"><h4>Sauvegarde en ligne</h4>
       <div class="card">
         <div class="cloud" id="c_box"><div class="ci">☁️</div><div style="flex:1;min-width:0"><b id="c_state">Désactivée</b><small id="c_last">Activez-la pour ne rien perdre si vous changez de téléphone.</small></div></div>
         <button class="cbtn" id="c_on">Activer la sauvegarde en ligne</button>
@@ -269,7 +322,7 @@ button.it:active{background:#ffffff0d}
         <button class="it dg" id="r_wipe"><span class="ico r">🗑</span><span class="lb">Tout effacer de ce téléphone</span></button>
       </div>
     </div>
-    <p class="foot">Chiffrement AES-256 sur l'appareil<br>Seul votre code peut ouvrir ce coffre<br>Version 3</p>
+    <p class="foot">Chiffrement AES-256 sur l'appareil<br>Seul votre code peut ouvrir ce coffre<br>Version 4</p>
   </div>
   <input type="file" id="rin" class="hide">
 </section>
@@ -385,7 +438,10 @@ async function start() {
 function openLockScreen() {
   KEY = null;
   if (CFG.mode === 'calc') { notesOpen(); }
-  else { lockPin = ''; drawDots($('#ldots'), 0); $('#lmsg').textContent = ''; if (typeof lockOk !== 'undefined') lockOk.style.opacity = .3; show('lock'); }
+  else {
+    lockPin = ''; drawDots($('#ldots'), 0); $('#lmsg').textContent = ''; lockOk.style.opacity = .3; show('lock');
+    mget('bio').then(b => { $('#lbio').classList.toggle('hide', !b); if (b && document.visibilityState === 'visible') setTimeout(() => { if (!KEY && $('#lock').classList.contains('on')) bioUnlock(); }, 350); });
+  }
 }
 
 /* ---------- Création du coffre ---------- */
@@ -446,7 +502,7 @@ lockOk.disabled = false; lockOk.textContent = 'OK'; lockOk.style.opacity = .3;
 lockOk.onclick = async () => {
   if (lockPin.length < 4 || Date.now() < waitUntil) return;
   lockOk.textContent = '…';
-  const ok = await tryUnlock(lockPin);
+  const ok = await tryUnlock(lockPin, 'écran de code');
   lockOk.textContent = 'OK';
   if (ok) { lockPin = ''; fails = 0; drawDots($('#ldots'), 0); lockOk.style.opacity = .3; } else lockFail();
 };
@@ -455,9 +511,19 @@ function lockFail() {
   if (fails >= 5) { waitUntil = Date.now() + 30000; $('#lmsg').textContent = 'Trop d’essais. Réessayez dans 30 secondes.'; setTimeout(() => $('#lmsg').textContent = '', 30000); }
   else $('#lmsg').textContent = 'Code incorrect';
 }
-async function tryUnlock(pin) {
-  try { const rec = await mget('key'); KEY = await unwrap(rec, pin); await openVault(); return true; }
-  catch (e) { KEY = null; return false; }
+$('#lbio').onclick = () => bioUnlock();
+
+/* Le vrai code ouvre le vrai coffre ; le faux code ouvre le coffre leurre */
+let DECOY = false;
+async function tryUnlock(pin, how = 'code') {
+  try { KEY = await unwrap(await mget('key'), pin); DECOY = false; }
+  catch (e) {
+    const k2 = await mget('key2');
+    try { if (!k2) throw 0; KEY = await unwrap(k2, pin); DECOY = true; }
+    catch (e2) { KEY = null; await logFail(how); return false; }
+  }
+  sessFails = 0; snapDone = false;
+  await openVault(); return true;
 }
 
 /* ---------- Bloc-notes (vrai bloc-notes + porte secrète) ---------- */
@@ -494,25 +560,125 @@ async function secretTry() {
   const v = $('#nsearch').value.trim();
   if (!/^\d{4,8}$/.test(v) || v === sTried) return;
   sTried = v;
-  if (await tryUnlock(v)) { $('#nsearch').value = ''; $('#nsearch').blur(); sTried = ''; }
+  if (await tryUnlock(v, 'bloc-notes')) { $('#nsearch').value = ''; $('#nsearch').blur(); sTried = ''; }
 }
 $('#nsearch').addEventListener('input', () => { notesDraw(); sTried = ''; clearTimeout(sT); sT = setTimeout(secretTry, 900); });
 $('#nsearch').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(sT); secretTry(); } });
+// Empreinte en mode bloc-notes : appui long (1 s) sur le titre « Notes »
+(() => {
+  const h = $('#notes h1'); let t;
+  const go = () => { t = setTimeout(async () => { if (await mget('bio')) bioUnlock(); }, 1000); };
+  const stop = () => clearTimeout(t);
+  h.addEventListener('pointerdown', go); ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => h.addEventListener(ev, stop));
+  h.addEventListener('contextmenu', e => e.preventDefault());
+})();
+
+/* ---------- Empreinte / Face ID (WebAuthn + PRF) ----------
+   L'empreinte débloque une clé secrète propre à ce téléphone, qui protège la clé du coffre. */
+const bioSupported = () => !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create && window.isSecureContext);
+async function prfKey(first) {
+  const base = await crypto.subtle.importKey('raw', first, 'HKDF', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: enc.encode('notes-bio'), info: enc.encode('master') }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function bioGet(cid, salt) {
+  const a = await navigator.credentials.get({ publicKey: { challenge: rnd(32), rpId: location.hostname, allowCredentials: [{ type: 'public-key', id: cid }], userVerification: 'required', timeout: 60000, extensions: { prf: { eval: { first: salt } } } } });
+  const r = a.getClientExtensionResults().prf;
+  if (!r || !r.results || !r.results.first) throw new Error('noprf');
+  return new Uint8Array(r.results.first);
+}
+async function bioEnable() {
+  const salt = rnd(32); pickerOpen = true;
+  try {
+    const c = await navigator.credentials.create({ publicKey: {
+      rp: { name: 'Notes', id: location.hostname }, user: { id: rnd(16), name: 'Notes', displayName: 'Notes' }, challenge: rnd(32),
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
+      timeout: 60000, extensions: { prf: { eval: { first: salt } } } } });
+    const ext = c.getClientExtensionResults().prf;
+    if (!ext || ext.enabled === false) throw new Error('noprf');
+    const cid = new Uint8Array(c.rawId);
+    const first = ext.results && ext.results.first ? new Uint8Array(ext.results.first) : await bioGet(cid, salt);
+    const k = await prfKey(first), e = await encB(k, await crypto.subtle.exportKey('raw', KEY));
+    await mset('bio', { cid, salt, iv: e.iv, data: e.data });
+  } finally { pickerOpen = false; }
+}
+async function bioUnlock() {
+  const b = await mget('bio'); if (!b) return false;
+  pickerOpen = true;
+  try {
+    const k = await prfKey(await bioGet(b.cid, b.salt));
+    KEY = await crypto.subtle.importKey('raw', await decB(k, b), { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    DECOY = false; sessFails = 0; snapDone = false;
+    await openVault(); return true;
+  } catch (e) { KEY = null; return false; }
+  finally { pickerOpen = false; }
+}
+
+/* ---------- Tentatives ratées + photo de l'intrus ----------
+   La photo est chiffrée avec une clé publique : on peut la prendre sans ouvrir le coffre,
+   mais seul le vrai code peut la regarder. */
+let sessFails = 0, snapDone = false;
+async function logFail(how) {
+  sessFails++;
+  const log = (await mget('log')) || [], e = { t: Date.now(), how };
+  if (CFG.intr && sessFails >= 3 && !snapDone) { snapDone = true; try { e.ph = await snapIntruder(); } catch (x) { console.warn(x); } }
+  log.push(e); while (log.length > 60) log.shift();
+  await mset('log', log);
+}
+async function snapIntruder() {
+  const pub = await mget('intrPub'); if (!pub) return null;
+  try { const p = await navigator.permissions.query({ name: 'camera' }); if (p.state !== 'granted') return null; } catch (e) { return null; }
+  const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 720 } }, audio: false });
+  try {
+    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.srcObject = st; await v.play();
+    await new Promise(r => setTimeout(r, 900));
+    const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d').drawImage(v, 0, 0);
+    const jpg = await new Promise(r => c.toBlob(r, 'image/jpeg', .8));
+    const ak = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']);
+    const e = await encB(ak, await jpg.arrayBuffer());
+    const pk = await crypto.subtle.importKey('spki', pub, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt']);
+    return { k: await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, pk, await crypto.subtle.exportKey('raw', ak)), iv: e.iv, d: e.data };
+  } finally { st.getTracks().forEach(t => t.stop()); }
+}
+async function intrPhotoUrl(ph) {
+  const pr = await mget('intrPriv'); if (!pr || !ph) return null;
+  const priv = await crypto.subtle.importKey('pkcs8', await decB(KEY, pr), { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['decrypt']);
+  const ak = await crypto.subtle.importKey('raw', await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, priv, ph.k), 'AES-GCM', false, ['decrypt']);
+  const u = URL.createObjectURL(new Blob([await decB(ak, { iv: ph.iv, data: ph.d })], { type: 'image/jpeg' })); URLS.push(u); return u;
+}
+const when = t => new Date(t).toLocaleString('fr-BE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+async function checkIntruders() {
+  if (DECOY || !KEY) return;
+  const log = (await mget('log')) || [], seen = CFG.seen || 0, news = log.filter(e => e.t > seen);
+  CFG.seen = Date.now(); await mset('cfg', CFG);
+  if (!news.length || (news.length < 2 && !news.some(e => e.ph))) return;
+  const imgs = []; for (const e of news) if (e.ph) { try { imgs.push(await intrPhotoUrl(e.ph)); } catch (x) {} }
+  ask({ title: `⚠️ ${news.length} tentative${news.length > 1 ? 's' : ''} d'ouverture`, text: `Depuis votre dernière visite, quelqu'un a tapé un mauvais code ${news.length} fois (dernière fois : ${when(news[news.length - 1].t)}).${imgs.length ? '<div class="intr">' + imgs.map(u => `<img src="${u}" alt="">`).join('') + '</div>' : ''}`, ok: 'OK', cancel: '' });
+}
 
 /* ---------- Ouverture du coffre ---------- */
+let ALBUMS = [], ALBUM = null, SEL = null;
+const albKey = () => DECOY ? 'albums2' : 'albums';
 async function openVault() {
   const rows = await tx('items', 'readonly', s => s.getAll());
   ITEMS = [];
   for (const r of rows) { try { ITEMS.push({ id: r.id, ...(await decJ(KEY, r)) }); } catch (e) {} }
   ITEMS.sort((a, b) => b.added - a.added);
+  await loadAlbums();
+  TAB = 'all'; ALBUM = null; SEL = null; selEnd(true);
+  document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.t === 'all'));
+  ['sec_cloud', 'sec_prot', 'r_bio'].forEach(id => $('#' + id).classList.toggle('hide', DECOY));
+  $('#bcloud').classList.toggle('hide', DECOY);
   render(); show('vault'); bumpIdle();
-  await loadCloud(); sync();
+  if (DECOY) { CS = null; return; }
+  await loadCloud(); sync(); setTimeout(checkIntruders, 300);
 }
 function lockNow() {
-  KEY = null; ITEMS = []; CS = null; cloudBadge();
+  stopShow();
+  KEY = null; ITEMS = []; ALBUMS = []; CS = null; DECOY = false; SEL = null; cloudBadge();
   URLS.forEach(u => URL.revokeObjectURL(u)); URLS = [];
   closeViewer(true); closeModal();
-  $('#grid').innerHTML = '';
+  $('#grid').innerHTML = ''; $('#albums').innerHTML = '';
   openLockScreen();
 }
 $('#block').onclick = lockNow;
@@ -532,65 +698,241 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', () => { if (KEY && !pickerOpen && CFG.auto === 0) lockNow(); });
 
+/* ---------- Fenêtre de choix (feuille) ----------
+   onPick est appelé directement pendant le toucher (nécessaire pour ouvrir l'appareil photo). */
+function sheet(title, opts, onPick) {
+  return new Promise(res => {
+    modal(`<div class="sheet"><h3>${esc(title)}</h3>${opts.map((o, i) => `<button class="opt${o.dg ? ' dg' : ''}" data-i="${i}">${o.ico ? `<span class="ico ${o.cls || 'gr'}">${o.ico}</span>` : ''}<span class="lb">${esc(o.label)}${o.sub ? `<small>${esc(o.sub)}</small>` : ''}</span></button>`).join('')}<button class="cancel" id="mno">Annuler</button></div>`);
+    $('#mbox').querySelectorAll('.opt').forEach(b => b.onclick = () => { const o = opts[+b.dataset.i]; if (onPick) onPick(o.v); closeModal(); res(o.v); });
+    $('#mno').onclick = () => { closeModal(); res(null); };
+  });
+}
+
+/* ---------- Albums ---------- */
+async function loadAlbums() {
+  ALBUMS = [];
+  const r = await mget(albKey()); if (r) { try { ALBUMS = await decJ(KEY, r); } catch (e) {} }
+  ITEMS.forEach(i => { if (i.album && !ALBUMS.includes(i.album)) ALBUMS.push(i.album); });
+}
+const saveAlbums = async () => mset(albKey(), await encJ(KEY, ALBUMS));
+function drawAlbums() {
+  const c = {}; ITEMS.forEach(i => { if (i.album) c[i.album] = (c[i.album] || 0) + 1; });
+  $('#albums').innerHTML = `<button data-a="" class="${ALBUM === null ? 'on' : ''}">📁 Tous</button>` +
+    ALBUMS.map((a, i) => `<button data-ai="${i}" class="${ALBUM === a ? 'on' : ''}">${esc(a)}<small>${c[a] || 0}</small></button>`).join('') +
+    `<button data-new="1">＋ Album</button>`;
+}
+async function newAlbum() {
+  const n = await ask({ title: 'Nouvel album', text: 'Nom de l’album :', input: '', ph: 'Ex. Papiers, Perso…', ok: 'Créer' });
+  const name = (n || '').trim().slice(0, 40); if (!name) return null;
+  if (!ALBUMS.includes(name)) { ALBUMS.push(name); await saveAlbums(); }
+  return name;
+}
+(() => {
+  const el = $('#albums'); let t, long = false;
+  el.addEventListener('pointerdown', e => { const b = e.target.closest('[data-ai]'); long = false; if (!b) return; t = setTimeout(() => { long = true; albumMenu(ALBUMS[+b.dataset.ai]); }, 600); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => el.addEventListener(ev, () => clearTimeout(t)));
+  el.addEventListener('contextmenu', e => e.preventDefault());
+  el.addEventListener('click', async e => {
+    const b = e.target.closest('button'); if (!b || long) return;
+    if (b.dataset.new) { const n = await newAlbum(); if (n) { ALBUM = n; render(); } return; }
+    ALBUM = b.dataset.ai !== undefined ? ALBUMS[+b.dataset.ai] : null; render(); $('#grid').scrollTop = 0;
+  });
+})();
+async function albumMenu(a) {
+  const v = await sheet(`Album « ${a} »`, [{ v: 'ren', ico: '✏️', cls: 'b', label: 'Renommer l’album' }, { v: 'del', ico: '🗑', cls: 'r', label: 'Supprimer l’album', sub: 'Les fichiers restent dans le coffre', dg: true }]);
+  if (v === 'ren') {
+    const n = ((await ask({ title: 'Renommer l’album', input: a, ok: 'Enregistrer' })) || '').trim().slice(0, 40);
+    if (!n || n === a) return;
+    ALBUMS = ALBUMS.map(x => x === a ? n : x).filter((x, i, arr) => arr.indexOf(x) === i);
+    await moveItems(ITEMS.filter(i => i.album === a), n, true); if (ALBUM === a) ALBUM = n;
+  } else if (v === 'del') {
+    ALBUMS = ALBUMS.filter(x => x !== a);
+    await moveItems(ITEMS.filter(i => i.album === a), '', true); if (ALBUM === a) ALBUM = null;
+  } else return;
+  await saveAlbums(); render();
+}
+async function pickAlbum(title) {
+  const opts = [{ v: '\u0000', ico: '🗂', cls: 'gr', label: 'Sans album' }, ...ALBUMS.map(a => ({ v: a, ico: '📁', cls: 'y', label: a })), { v: '\u0001', ico: '＋', cls: 'b', label: 'Nouvel album…' }];
+  const v = await sheet(title, opts);
+  if (v === null) return null;
+  if (v === '\u0000') return '';
+  if (v === '\u0001') return await newAlbum();
+  return v;
+}
+async function moveItems(list, album, quiet) {
+  for (const it of list) { it.album = album; await saveMeta(it); await markDirty(it.id); }
+  if (!quiet) { render(); toast(album ? `Déplacé dans « ${album} »` : 'Retiré de l’album'); }
+  sync();
+}
+
 /* ---------- Grille ---------- */
-function counts() { const c = { all: ITEMS.length, photo: 0, video: 0, doc: 0 }; ITEMS.forEach(i => c[i.kind]++); for (const k in c) $('#n_' + k).textContent = c[k] ? ' ' + c[k] : ''; }
-function list() { return TAB === 'all' ? ITEMS : ITEMS.filter(i => i.kind === TAB); }
+const KINDS = ['photo', 'video', 'doc', 'note'];
+function counts() {
+  const base = ALBUM === null ? ITEMS : ITEMS.filter(i => i.album === ALBUM), c = { all: base.length, photo: 0, video: 0, doc: 0, note: 0 };
+  base.forEach(i => c[i.kind] = (c[i.kind] || 0) + 1);
+  for (const k in c) $('#n_' + k).textContent = c[k] ? ' ' + c[k] : '';
+}
+function list() { return ITEMS.filter(i => (TAB === 'all' || i.kind === TAB) && (ALBUM === null || i.album === ALBUM)); }
 function render() {
-  counts();
+  counts(); drawAlbums();
   const L = list(), g = $('#grid');
   if (!L.length) {
-    const lab = { all: 'fichier', photo: 'photo', video: 'vidéo', doc: 'document' }[TAB];
-    g.innerHTML = `<div class="empty"><b>🗝️</b>Aucun ${lab} pour l'instant.<br>Appuyez sur <b style="display:inline;font-size:inherit">＋ Ajouter</b> pour cacher vos photos, vidéos et documents.</div>`;
+    const lab = { all: 'fichier', photo: 'photo', video: 'vidéo', doc: 'document', note: 'note secrète' }[TAB];
+    g.innerHTML = `<div class="empty"><b>🗝️</b>Aucun${TAB === 'note' || TAB === 'photo' ? 'e' : ''} ${lab} ${ALBUM ? 'dans cet album' : 'pour l’instant'}.<br>Appuyez sur <b style="display:inline;font-size:inherit">＋ Ajouter</b> pour prendre une photo, importer des fichiers ou écrire une note.</div>`;
     return;
   }
-  g.innerHTML = L.map((it, i) => it.thumb
-    ? `<div class="cell" data-i="${i}"><img src="${it.thumb}" alt="" loading="lazy">${it.kind === 'video' ? `<span class="vd">▶ ${it.dur ? dur(it.dur) : ''}</span>` : ''}</div>`
-    : `<div class="cell" data-i="${i}"><div class="doc"><span>${it.kind === 'video' ? '🎬' : it.kind === 'photo' ? '🖼️' : docIcon(it.name, it.type)}</span>${esc(it.name)}<small style="color:#888">${size(it.size)}</small></div></div>`).join('');
+  g.innerHTML = L.map(it => {
+    const sel = SEL && SEL.has(it.id) ? ' sel' : '';
+    if (it.kind === 'note') { const p = (it.preview || '').split('\n'); return `<div class="cell${sel}" data-id="${it.id}"><div class="note"><b>${esc(it.name)}</b>${esc(p.slice(1).join('\n').trim().slice(0, 140))}</div></div>`; }
+    if (it.thumb) return `<div class="cell${sel}" data-id="${it.id}"><img src="${it.thumb}" alt="" loading="lazy">${it.kind === 'video' ? `<span class="vd">▶ ${it.dur ? dur(it.dur) : ''}</span>` : ''}</div>`;
+    return `<div class="cell${sel}" data-id="${it.id}"><div class="doc"><span>${it.kind === 'video' ? '🎬' : it.kind === 'photo' ? '🖼️' : docIcon(it.name, it.type)}</span>${esc(it.name)}<small style="color:#888">${size(it.size)}</small></div></div>`;
+  }).join('');
 }
 const dur = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
-$('#grid').addEventListener('click', e => { const c = e.target.closest('.cell'); if (c) openViewer(+c.dataset.i); });
 document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => { TAB = b.dataset.t; document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x === b)); render(); $('#grid').scrollTop = 0; });
 
-/* ---------- Ajout de fichiers ---------- */
-$('#badd').onclick = () => { pickerOpen = true; $('#fin').value = ''; $('#fin').click(); setTimeout(() => pickerOpen = false, 120000); };
+/* Toucher = ouvrir ; appui long = sélectionner */
+(() => {
+  const g = $('#grid'); let t, sx, sy, longDone = false;
+  g.addEventListener('pointerdown', e => {
+    const c = e.target.closest('.cell'); longDone = false; if (!c) return; sx = e.clientX; sy = e.clientY;
+    t = setTimeout(() => { longDone = true; navigator.vibrate && navigator.vibrate(15); if (!SEL) selStart(c.dataset.id); else selToggle(c.dataset.id); }, 480);
+  });
+  g.addEventListener('pointermove', e => { if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) clearTimeout(t); });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => g.addEventListener(ev, () => clearTimeout(t)));
+  g.addEventListener('contextmenu', e => e.preventDefault());
+  g.addEventListener('click', e => {
+    const c = e.target.closest('.cell'); if (!c || longDone) return;
+    if (SEL) selToggle(c.dataset.id); else openViewer(list().findIndex(x => x.id === c.dataset.id));
+  });
+})();
+
+/* ---------- Sélection multiple ---------- */
+function selStart(id) {
+  SEL = new Set(id ? [id] : []);
+  $('#vault').classList.add('selmode'); $('#vtop').classList.add('hide'); $('#stop').classList.remove('hide');
+  $('#badd').classList.add('hide'); $('#selbar').classList.remove('hide');
+  render(); selCount();
+}
+function selEnd(silent) {
+  SEL = null;
+  $('#vault').classList.remove('selmode'); $('#vtop').classList.remove('hide'); $('#stop').classList.add('hide');
+  $('#badd').classList.remove('hide'); $('#selbar').classList.add('hide');
+  if (!silent) render();
+}
+function selToggle(id) { SEL.has(id) ? SEL.delete(id) : SEL.add(id); const c = $(`#grid .cell[data-id="${id}"]`); if (c) c.classList.toggle('sel', SEL.has(id)); selCount(); }
+function selCount() { const n = SEL ? SEL.size : 0; $('#scount').textContent = n + (n > 1 ? ' sélectionnés' : ' sélectionné'); $('#sall').textContent = SEL && n === list().length && n ? 'Aucun' : 'Tout'; }
+const selItems = () => ITEMS.filter(i => SEL && SEL.has(i.id));
+$('#bsel').onclick = () => { if (!ITEMS.length) return toast('Le coffre est vide'); selStart(); toast('Touchez les fichiers à sélectionner'); };
+$('#scancel').onclick = () => selEnd();
+$('#sall').onclick = () => { const L = list(); if (SEL.size === L.length) SEL.clear(); else L.forEach(i => SEL.add(i.id)); render(); selCount(); };
+$('#s_mv').onclick = async () => {
+  const L = selItems(); if (!L.length) return toast('Sélectionnez au moins un fichier');
+  const a = await pickAlbum(`Déplacer ${L.length} fichier${L.length > 1 ? 's' : ''}`); if (a === null) return;
+  await moveItems(L, a); selEnd();
+};
+$('#s_del').onclick = async () => {
+  const L = selItems(); if (!L.length) return toast('Sélectionnez au moins un fichier');
+  const ok = await ask({ title: `Supprimer ${L.length} fichier${L.length > 1 ? 's' : ''} ?`, text: 'Ils seront effacés définitivement du coffre.', ok: 'Supprimer', danger: true });
+  if (!ok) return;
+  for (const it of L) await removeItem(it);
+  selEnd(); sync(); toast('Supprimé');
+};
+$('#s_dl').onclick = async () => {
+  const L = selItems(); if (!L.length) return toast('Sélectionnez au moins un fichier');
+  const ok = await ask({ title: 'Enregistrer hors du coffre ?', text: `Une copie <b>non protégée</b> de ${L.length > 1 ? 'ces ' + L.length + ' fichiers' : 'ce fichier'} sera enregistrée sur le téléphone, visible par tout le monde.`, ok: 'Enregistrer' });
+  if (!ok) return;
+  const files = []; for (const it of L) files.push(await asFile(it));
+  await exportFiles(files); selEnd();
+};
+async function asFile(it) { const b = await getFile(it); return new File([b], it.kind === 'note' && !/\.txt$/i.test(it.name) ? it.name + '.txt' : it.name, { type: it.type }); }
+async function exportFiles(files) {
+  if (navigator.canShare && /Android|iPhone|iPad/i.test(navigator.userAgent) && navigator.canShare({ files })) {
+    try { pickerOpen = true; await navigator.share({ files }); return; } catch (e) { if (e.name === 'AbortError') return; } finally { pickerOpen = false; }
+  }
+  for (const f of files) { const u = URL.createObjectURL(f), a = document.createElement('a'); a.href = u; a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 60000); await new Promise(r => setTimeout(r, 300)); }
+}
+async function removeItem(it) {
+  const d1 = await db();
+  await new Promise(r => { const t = d1.transaction(['items', 'blobs'], 'readwrite'); t.objectStore('items').delete(it.id); t.objectStore('blobs').delete(it.id); t.oncomplete = r; });
+  ITEMS = ITEMS.filter(x => x.id !== it.id);
+  await pendDel(it.id);
+}
+
+/* ---------- Ajout : appareil photo, caméra, galerie, documents, note ---------- */
+let addSrc = 'gal';
+$('#badd').onclick = () => sheet('Ajouter au coffre', [
+  { v: 'cam', ico: '📷', cls: 'b', label: 'Prendre une photo', sub: 'Va directement dans le coffre, pas dans la Galerie' },
+  { v: 'vid', ico: '🎥', cls: 'r', label: 'Filmer une vidéo', sub: 'Va directement dans le coffre' },
+  { v: 'gal', ico: '🖼', cls: 'o', label: 'Importer photos et vidéos' },
+  { v: 'doc', ico: '📄', cls: 'g', label: 'Importer des documents', sub: 'PDF, Word, fichiers…' },
+  { v: 'note', ico: '📝', cls: 'y', label: 'Écrire une note secrète', sub: 'Codes, adresses, infos privées' }
+], v => {
+  if (v === 'note') return setTimeout(newSecretNote, 50);
+  const f = $('#fin'); f.value = ''; f.removeAttribute('capture'); addSrc = v;
+  if (v === 'cam') { f.accept = 'image/*'; f.setAttribute('capture', 'environment'); f.multiple = false; }
+  else if (v === 'vid') { f.accept = 'video/*'; f.setAttribute('capture', 'environment'); f.multiple = false; }
+  else if (v === 'gal') { f.accept = 'image/*,video/*'; f.multiple = true; }
+  else { f.accept = ''; f.multiple = true; }
+  pickerOpen = true; f.click(); setTimeout(() => pickerOpen = false, 180000);
+});
 window.addEventListener('focus', () => setTimeout(() => { if (!$('#bar').classList.contains('hide')) return; pickerOpen = false; }, 1500));
+const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}h${p(d.getMinutes())}`; };
 $('#fin').onchange = async e => {
   pickerOpen = false;
   const files = [...e.target.files]; if (!files.length || !KEY) return;
+  const cam = addSrc === 'cam' || addSrc === 'vid';
   const bar = $('#bar'); bar.classList.remove('hide');
   let done = 0, failed = 0;
   for (const f of files) {
     $('#bartxt').textContent = `Chiffrement ${done + 1} / ${files.length} : ${f.name}`;
     $('#barp').style.width = (done / files.length * 100) + '%';
-    try { await addFile(f); } catch (err) { failed++; console.warn(err); }
+    const ext = (f.name.match(/\.[a-z0-9]+$/i) || [f.type.startsWith('video') ? '.mp4' : '.jpg'])[0];
+    try { await addFile(f, cam ? `${addSrc === 'vid' ? 'Vidéo' : 'Photo'} ${stamp()}${ext}` : null); } catch (err) { failed++; console.warn(err); }
     done++;
   }
   $('#barp').style.width = '100%';
   setTimeout(() => bar.classList.add('hide'), 400);
   ITEMS.sort((a, b) => b.added - a.added); render(); sync();
   if (failed) toast(`${failed} fichier(s) n'ont pas pu être ajoutés (trop lourds ?)`, 4000);
-  else ask({ title: `${files.length} fichier${files.length > 1 ? 's' : ''} caché${files.length > 1 ? 's' : ''} 🔐`, text: "Ils sont maintenant chiffrés dans votre coffre.<br><br><b>Important :</b> l'appli ne peut pas effacer les originaux. Pensez à les supprimer vous-même de votre Galerie / Photos (et de la corbeille « Récemment supprimés ») si vous voulez qu'ils restent secrets.", ok: 'OK', cancel: '' });
+  else if (cam) toast(addSrc === 'vid' ? 'Vidéo cachée dans le coffre 🔐' : 'Photo cachée dans le coffre 🔐');
+  else if (addSrc === 'gal') ask({ title: `${files.length} fichier${files.length > 1 ? 's' : ''} caché${files.length > 1 ? 's' : ''} 🔐`, text: "Ils sont maintenant chiffrés dans votre coffre.<br><br><b>Important :</b> l'appli ne peut pas effacer les originaux. Supprimez-les vous-même de votre Galerie (et de « Récemment supprimés »).<br><br>Astuce : utilisez « Prendre une photo » pour que vos prochaines photos ne passent jamais par la Galerie.", ok: 'OK', cancel: '' });
+  else toast(`${files.length} fichier${files.length > 1 ? 's' : ''} caché${files.length > 1 ? 's' : ''} 🔐`);
 };
-async function addFile(f) {
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  const kind = kindOf(f.type || '');
-  let thumb = null, d = 0, w = 0, h = 0;
-  try {
-    if (kind === 'photo') ({ thumb, w, h } = await imgThumb(f));
-    else if (kind === 'video') ({ thumb, d } = await vidThumb(f));
-  } catch (e) {}
-  const buf = await f.arrayBuffer();
-  const blob = await encB(KEY, buf);
-  const meta = { name: f.name || 'sans-nom', type: f.type || 'application/octet-stream', size: f.size, kind, thumb, dur: d, w, h, added: Date.now(), taken: f.lastModified || Date.now() };
-  const m = await encJ(KEY, meta);
-  const d1 = await db();
+async function storeItem(id, buf, meta) {
+  const blob = await encB(KEY, buf), m = await encJ(KEY, meta), d1 = await db();
   await new Promise((ok, ko) => {
     const t = d1.transaction(['items', 'blobs'], 'readwrite');
     t.objectStore('blobs').put({ id, iv: blob.iv, data: blob.data });
     t.objectStore('items').put({ id, iv: m.iv, data: m.data });
     t.oncomplete = ok; t.onerror = () => ko(t.error); t.onabort = () => ko(t.error);
   });
+}
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+async function addFile(f, name) {
+  const id = newId(), kind = kindOf(f.type || '');
+  let thumb = null, d = 0, w = 0, h = 0;
+  try {
+    if (kind === 'photo') ({ thumb, w, h } = await imgThumb(f));
+    else if (kind === 'video') ({ thumb, d } = await vidThumb(f));
+  } catch (e) {}
+  const meta = { name: name || f.name || 'sans-nom', type: f.type || 'application/octet-stream', size: f.size, kind, thumb, dur: d, w, h, added: Date.now(), taken: f.lastModified || Date.now(), album: ALBUM || '' };
+  await storeItem(id, await f.arrayBuffer(), meta);
   ITEMS.push({ id, ...meta });
+}
+async function newSecretNote() {
+  const id = newId(), meta = { name: 'Nouvelle note', type: 'text/plain', size: 0, kind: 'note', preview: '', added: Date.now(), album: ALBUM || '' };
+  await storeItem(id, new ArrayBuffer(0), meta);
+  ITEMS.unshift({ id, ...meta });
+  if (TAB !== 'all' && TAB !== 'note') { TAB = 'note'; document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.t === 'note')); }
+  render(); openViewer(list().findIndex(x => x.id === id), true);
+}
+async function saveNote(it, text) {
+  const buf = enc.encode(text), b = await encB(KEY, buf);
+  it.size = buf.length; it.preview = text.slice(0, 300);
+  it.name = ((text.split('\n').find(l => l.trim()) || 'Note sans titre').trim()).slice(0, 60);
+  await tx('blobs', 'readwrite', s => s.put({ id: it.id, iv: b.iv, data: b.data }));
+  await saveMeta(it); await markDirty(it.id, true); sync();
 }
 function drawThumb(src, sw, sh) {
   const S = 300, c = document.createElement('canvas'); c.width = c.height = S;
@@ -619,61 +961,132 @@ function vidThumb(f) {
   });
 }
 
-/* ---------- Visionneuse ---------- */
+/* ---------- Visionneuse (zoom, glisser, diaporama, notes) ---------- */
 async function getFile(it) {
   const b = await tx('blobs', 'readonly', s => s.get(it.id));
   return new Blob([await decB(KEY, b)], { type: it.type });
 }
-async function openViewer(i) {
+let Z = { s: 1, x: 0, y: 0 }, noteDirty = false, showT = null;
+function zApply() { const im = $('#vc img'); if (im) im.style.transform = `translate(${Z.x}px,${Z.y}px) scale(${Z.s})`; }
+function zReset() { Z = { s: 1, x: 0, y: 0 }; zApply(); }
+async function openViewer(i, focus) {
+  if (noteDirty) await flushNote();
   curIdx = i; const it = list()[i]; if (!it) return;
-  $('#vname').textContent = it.name + ' · ' + size(it.size);
+  zReset(); noteDirty = false; $('#vsave').classList.add('hide');
+  $('#vname').textContent = it.kind === 'note' ? 'Note secrète' : it.name + ' · ' + size(it.size);
   const vc = $('#vc'); vc.innerHTML = '<div style="color:#888">Déchiffrement…</div>';
   show('view');
-  $('#prev').style.visibility = i > 0 ? 'visible' : 'hidden';
-  $('#next').style.visibility = i < list().length - 1 ? 'visible' : 'hidden';
+  const L = list();
+  $('#prev').style.visibility = i > 0 && it.kind !== 'note' ? 'visible' : 'hidden';
+  $('#next').style.visibility = i < L.length - 1 && it.kind !== 'note' ? 'visible' : 'hidden';
+  $('#vplay').classList.toggle('hide', it.kind !== 'photo' || L.filter(x => x.kind === 'photo').length < 2);
+  $('#vbody').style.touchAction = it.kind === 'photo' ? 'none' : 'pan-y';
   try {
     const blob = await getFile(it);
     if (curIdx !== i) return;
     if (curUrl) URL.revokeObjectURL(curUrl);
     curUrl = URL.createObjectURL(blob); URLS.push(curUrl);
-    if (it.kind === 'photo') vc.innerHTML = `<img src="${curUrl}" alt="">`;
+    if (it.kind === 'photo') vc.innerHTML = `<img src="${curUrl}" alt="" draggable="false">`;
     else if (it.kind === 'video') vc.innerHTML = `<video src="${curUrl}" controls autoplay playsinline></video>`;
+    else if (it.kind === 'note') {
+      vc.innerHTML = '<textarea id="vnote" placeholder="Écrivez votre note secrète…"></textarea>';
+      const ta = $('#vnote'); ta.value = await blob.text();
+      ta.oninput = () => { noteDirty = true; $('#vsave').classList.remove('hide'); };
+      if (focus || !ta.value) setTimeout(() => ta.focus(), 80);
+    }
     else if (/pdf/.test(it.type)) vc.innerHTML = `<iframe src="${curUrl}"></iframe>`;
     else if (/^text\/|json|csv/.test(it.type) && it.size < 2e6) vc.innerHTML = `<pre>${esc(await blob.text())}</pre>`;
     else if (/^audio\//.test(it.type)) vc.innerHTML = `<audio src="${curUrl}" controls autoplay></audio>`;
     else vc.innerHTML = `<div style="text-align:center;color:#ccc;padding:30px"><div style="font-size:64px">${docIcon(it.name, it.type)}</div><p>${esc(it.name)}</p><p style="color:#888">Ce type de fichier ne peut pas s'afficher ici.<br>Touchez « Enregistrer » pour l'ouvrir avec une autre appli.</p></div>`;
   } catch (e) { vc.innerHTML = '<div style="color:#f66">Impossible d’ouvrir ce fichier.</div>'; }
 }
-function closeViewer(silent) {
+async function flushNote() {
+  const it = list()[curIdx], ta = $('#vnote');
+  if (!it || it.kind !== 'note' || !ta) return;
+  if (noteDirty) { noteDirty = false; await saveNote(it, ta.value); $('#vsave').classList.add('hide'); render(); }
+}
+$('#vsave').onclick = async () => { await flushNote(); toast('Note enregistrée 🔐'); };
+async function closeViewer(silent) {
+  stopShow();
+  if (!silent && KEY) {
+    await flushNote();
+    const it = list()[curIdx];
+    if (it && it.kind === 'note' && !it.size) { await removeItem(it); sync(); }   // note vide : on ne la garde pas
+  }
   const v = $('#vc video'); if (v) v.pause();
   $('#vc').innerHTML = '';
   if (curUrl) { URL.revokeObjectURL(curUrl); curUrl = null; }
-  curIdx = -1;
-  if (!silent && KEY) show('vault');
+  curIdx = -1; noteDirty = false;
+  if (!silent && KEY) { render(); show('vault'); }
 }
 $('#vclose').onclick = () => closeViewer();
-$('#prev').onclick = () => curIdx > 0 && openViewer(curIdx - 1);
-$('#next').onclick = () => curIdx < list().length - 1 && openViewer(curIdx + 1);
-let sx = null;
-$('#vbody').addEventListener('touchstart', e => { sx = e.touches[0].clientX; }, { passive: true });
-$('#vbody').addEventListener('touchend', e => { if (sx === null || $('#vc video,#vc iframe')) return; const dx = e.changedTouches[0].clientX - sx; sx = null; if (Math.abs(dx) > 60) (dx > 0 ? $('#prev') : $('#next')).click(); }, { passive: true });
+const goPrev = () => curIdx > 0 && openViewer(curIdx - 1);
+const goNext = () => curIdx < list().length - 1 && openViewer(curIdx + 1);
+$('#prev').onclick = () => { stopShow(); goPrev(); };
+$('#next').onclick = () => { stopShow(); goNext(); };
 document.addEventListener('keydown', e => {
-  if (!$('#view').classList.contains('on')) return;
+  if (!$('#view').classList.contains('on') || $('#vnote')) return;
   if (e.key === 'ArrowLeft') $('#prev').click(); else if (e.key === 'ArrowRight') $('#next').click(); else if (e.key === 'Escape') closeViewer();
 });
+/* Gestes : glisser (photo suivante), pincer (zoom), double-toucher (zoom), déplacer (photo zoomée) */
+(() => {
+  const vb = $('#vbody'), P = new Map(); let pinch = null, pan = null, g = null, lastTap = 0;
+  const dist = () => { const [a, b] = [...P.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+  vb.addEventListener('pointerdown', e => {
+    if (e.target.closest('.nav') || !$('#vc img')) { g = { x: e.clientX, y: e.clientY, multi: false, media: !!$('#vc video,#vc iframe,#vnote,#vc pre') }; return; }
+    stopShow(); P.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (P.size === 1) {
+      g = { x: e.clientX, y: e.clientY, multi: false }; pan = { x: e.clientX, y: e.clientY, zx: Z.x, zy: Z.y };
+      const now = Date.now();
+      if (now - lastTap < 280) { Z.s > 1 ? zReset() : (Z.s = 2.5, zApply()); lastTap = 0; g.dbl = true; } else lastTap = now;
+    } else if (P.size === 2) { pinch = { d: dist(), s: Z.s }; if (g) g.multi = true; }
+  });
+  vb.addEventListener('pointermove', e => {
+    if (!P.has(e.pointerId)) return;
+    P.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && P.size === 2) { Z.s = Math.min(5, Math.max(1, pinch.s * dist() / pinch.d)); if (Z.s === 1) { Z.x = Z.y = 0; } zApply(); }
+    else if (P.size === 1 && Z.s > 1 && pan) { Z.x = pan.zx + e.clientX - pan.x; Z.y = pan.zy + e.clientY - pan.y; zApply(); }
+  });
+  const up = e => {
+    const wasPhoto = P.has(e.pointerId); P.delete(e.pointerId);
+    if (P.size < 2) pinch = null;
+    if (P.size === 1) { const [p] = [...P.values()]; pan = { x: p.x, y: p.y, zx: Z.x, zy: Z.y }; }
+    if (!g || P.size) return;
+    const dx = e.clientX - g.x, dy = e.clientY - g.y;
+    if (!g.multi && !g.dbl && !g.media && (wasPhoto ? Z.s === 1 : true) && Math.abs(dx) > 60 && Math.abs(dy) < 90) { dx > 0 ? goPrev() : goNext(); }
+    g = null;
+  };
+  ['pointerup', 'pointercancel'].forEach(ev => vb.addEventListener(ev, up));
+})();
+function stopShow() { if (showT) { clearInterval(showT); showT = null; $('#vplay').textContent = '▶'; } }
+$('#vplay').onclick = () => {
+  if (showT) return stopShow();
+  $('#vplay').textContent = '⏸';
+  showT = setInterval(() => {
+    const L = list(); let j = curIdx + 1;
+    while (j < L.length && L[j].kind !== 'photo') j++;
+    if (j >= L.length) { j = L.findIndex(x => x.kind === 'photo'); }
+    if (j < 0) return stopShow();
+    const keep = showT; openViewer(j).then(() => { if (keep) { showT = keep; $('#vplay').textContent = '⏸'; $('#vplay').classList.remove('hide'); } });
+  }, 3000);
+};
 
 $('#vdl').onclick = async () => {
   const it = list()[curIdx]; if (!it) return;
-  const ok = await ask({ title: 'Enregistrer hors du coffre ?', text: 'Une copie <b>non protégée</b> de ce fichier sera enregistrée dans vos Téléchargements, visible par tout le monde.', ok: 'Enregistrer' });
+  await flushNote();
+  const ok = await ask({ title: 'Enregistrer hors du coffre ?', text: 'Une copie <b>non protégée</b> de ce fichier sera enregistrée sur le téléphone, visible par tout le monde.', ok: 'Enregistrer' });
   if (!ok) return;
-  const blob = await getFile(it);
-  if (navigator.canShare && navigator.canShare({ files: [new File([blob], it.name, { type: it.type })] }) && /Android|iPhone|iPad/i.test(navigator.userAgent)) {
-    try { pickerOpen = true; await navigator.share({ files: [new File([blob], it.name, { type: it.type })] }); pickerOpen = false; return; } catch (e) { pickerOpen = false; if (e.name === 'AbortError') return; }
-  }
-  const u = URL.createObjectURL(blob), a = document.createElement('a'); a.href = u; a.download = it.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 60000);
+  await exportFiles([await asFile(it)]);
+};
+$('#vmv').onclick = async () => {
+  const it = list()[curIdx]; if (!it) return;
+  const a = await pickAlbum('Ranger dans un album'); if (a === null) return;
+  await flushNote(); await moveItems([it], a);
+  const L = list(); if (!L.includes(it)) { L.length ? openViewer(Math.min(curIdx, L.length - 1)) : closeViewer(); }
 };
 $('#vren').onclick = async () => {
   const it = list()[curIdx]; if (!it) return;
+  if (it.kind === 'note') return toast('Le titre d’une note est sa première ligne');
   const n = await ask({ title: 'Renommer', input: it.name, ok: 'Enregistrer' });
   if (!n || !n.trim()) return;
   it.name = n.trim(); await saveMeta(it); await markDirty(it.id); sync();
@@ -683,10 +1096,8 @@ $('#vdel').onclick = async () => {
   const it = list()[curIdx]; if (!it) return;
   const ok = await ask({ title: 'Supprimer définitivement ?', text: `« ${esc(it.name)} » sera effacé du coffre. Cette action est irréversible.`, ok: 'Supprimer', danger: true });
   if (!ok) return;
-  const d1 = await db();
-  await new Promise(r => { const t = d1.transaction(['items', 'blobs'], 'readwrite'); t.objectStore('items').delete(it.id); t.objectStore('blobs').delete(it.id); t.oncomplete = r; });
-  ITEMS = ITEMS.filter(x => x.id !== it.id); render();
-  await pendDel(it.id); sync();
+  noteDirty = false;
+  await removeItem(it); render(); sync();
   const L = list();
   if (!L.length) closeViewer(); else openViewer(Math.min(curIdx, L.length - 1));
   toast('Supprimé');
@@ -697,15 +1108,22 @@ async function saveMeta(it) {
 }
 
 /* ---------- Réglages ---------- */
-function drawSets() {
+async function drawSets() {
   document.querySelectorAll('#segMode button').forEach(b => b.classList.toggle('on', b.dataset.v === CFG.mode));
   document.querySelectorAll('#segAuto button').forEach(b => b.classList.toggle('on', +b.dataset.v === CFG.auto));
   $('#n_mode').innerHTML = CFG.mode === 'calc' ? "Ressemble à une appli de notes. Code à taper dans « Rechercher »." : "L'appli demande le code dès l'ouverture.";
+  if (DECOY) return;
+  $('#r_bio').classList.toggle('hide', !bioSupported());
+  $('#e_bio').textContent = (await mget('bio')) ? (CFG.mode === 'calc' ? 'Activé · appui long sur le titre « Notes »' : 'Activé') : 'Désactivé';
+  $('#e_decoy').textContent = (await mget('key2')) ? 'Activé' : 'Ouvre un faux coffre si on vous force';
+  $('#e_intr').textContent = CFG.intr ? 'Activée · après 3 codes faux' : 'Désactivée';
+  const log = (await mget('log')) || [];
+  $('#e_log').textContent = log.length ? `${log.length} · dernière ${when(log[log.length - 1].t)}` : 'Aucune';
 }
 $('#bset').onclick = async () => {
   drawSets(); drawCloud(); show('sets'); $('#sets').scrollTop = 0;
-  const used = ITEMS.reduce((a, i) => a + i.size, 0), c = { photo: 0, video: 0, doc: 0 }; ITEMS.forEach(i => c[i.kind]++);
-  const parts = [c.photo && `${c.photo} photo${c.photo > 1 ? 's' : ''}`, c.video && `${c.video} vidéo${c.video > 1 ? 's' : ''}`, c.doc && `${c.doc} doc${c.doc > 1 ? 's' : ''}`].filter(Boolean);
+  const used = ITEMS.reduce((a, i) => a + i.size, 0), c = { photo: 0, video: 0, doc: 0, note: 0 }; ITEMS.forEach(i => c[i.kind]++);
+  const parts = [c.photo && `${c.photo} photo${c.photo > 1 ? 's' : ''}`, c.video && `${c.video} vidéo${c.video > 1 ? 's' : ''}`, c.doc && `${c.doc} doc${c.doc > 1 ? 's' : ''}`, c.note && `${c.note} note${c.note > 1 ? 's' : ''}`].filter(Boolean);
   let txt = (parts.join(' · ') || 'Vide') + ' — ' + size(used), pct = 0;
   try { const e = await navigator.storage.estimate(); if (e.quota) { pct = Math.min(100, e.usage / e.quota * 100); txt += ` sur ${size(e.quota)}`; } } catch (e) {}
   $('#e_space').textContent = txt; $('#e_meter').style.width = Math.max(2, pct) + '%';
@@ -720,19 +1138,108 @@ $('#segAuto').onclick = async e => {
   const b = e.target.closest('button'); if (!b) return;
   CFG.auto = +b.dataset.v; await mset('cfg', CFG); drawSets(); bumpIdle();
 };
+const opens = async (rec, pin) => { try { if (!rec) return false; await unwrap(rec, pin); return true; } catch (e) { return false; } };
 $('#r_pin').onclick = async () => {
+  const mine = DECOY ? 'key2' : 'key', other = DECOY ? 'key' : 'key2';
   const old = await ask({ title: 'Changer le code', text: 'Code actuel :', input: '', ph: '••••', ok: 'Suivant', pw: true });
   if (old === null) return;
-  try { await unwrap(await mget('key'), old); } catch (e) { return toast('Code actuel incorrect'); }
+  if (!(await opens(await mget(mine), old))) return toast('Code actuel incorrect');
   const n1 = await ask({ title: 'Nouveau code', text: '4 à 8 chiffres :', input: '', ph: '••••', ok: 'Suivant', pw: true });
   if (n1 === null) return;
   if (!/^\d{4,8}$/.test(n1)) return toast('Le code doit faire 4 à 8 chiffres');
+  if (await opens(await mget(other), n1)) return toast('Choisissez un autre code');
   const n2 = await ask({ title: 'Confirmez le nouveau code', input: '', ph: '••••', ok: 'Valider', pw: true });
   if (n2 !== n1) return toast('Les deux codes sont différents');
-  await mset('key', await wrap(KEY, n1));
+  await mset(mine, await wrap(KEY, n1));
   toast('Code modifié ✅'); sync();
 };
+/* Empreinte */
+$('#r_bio').onclick = async () => {
+  if (await mget('bio')) {
+    const v = await sheet('Empreinte / Face ID', [{ v: 'off', ico: '👆', cls: 'r', label: 'Désactiver', dg: true }]);
+    if (v === 'off') { await tx('meta', 'readwrite', s => s.delete('bio')); drawSets(); toast('Empreinte désactivée'); }
+    return;
+  }
+  const ok = await ask({ title: 'Ouvrir avec l’empreinte ou Face ID', text: (CFG.mode === 'calc' ? "En mode bloc-notes, faites un <b>appui long (1 seconde) sur le titre « Notes »</b> pour utiliser l'empreinte." : "L'empreinte vous sera proposée à chaque ouverture.") + "<br><br>Votre code reste toujours utilisable.", ok: 'Activer' });
+  if (!ok) return;
+  try { await bioEnable(); drawSets(); toast('Empreinte / Face ID activé ✅'); }
+  catch (e) { console.warn(e); toast(e.name === 'NotAllowedError' ? 'Annulé' : "Ce téléphone ne permet pas encore l'ouverture par empreinte ici", 4000); }
+};
+/* Faux code */
+async function decoyKey() {
+  const r = await mget('key2r'); if (!r) return null;
+  return crypto.subtle.importKey('raw', await decB(KEY, r), { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+}
+async function askNewDecoy() {
+  const c1 = await ask({ title: 'Faux code', text: "Choisissez un code (4 à 8 chiffres) <b>différent</b> de votre vrai code. Il ouvrira un faux coffre, séparé du vrai.", input: '', ph: '••••', ok: 'Suivant', pw: true });
+  if (c1 === null) return null;
+  if (!/^\d{4,8}$/.test(c1)) { toast('Le code doit faire 4 à 8 chiffres'); return null; }
+  if (await opens(await mget('key'), c1)) { toast("C'est votre vrai code : choisissez-en un autre"); return null; }
+  const c2 = await ask({ title: 'Confirmez le faux code', input: '', ph: '••••', ok: 'Valider', pw: true });
+  if (c2 !== c1) { toast('Les deux codes sont différents'); return null; }
+  return c1;
+}
+$('#r_decoy').onclick = async () => {
+  if (await mget('key2')) {
+    const v = await sheet('Faux code', [{ v: 'chg', ico: '🔁', cls: 'b', label: 'Changer le faux code' }, { v: 'off', ico: '🗑', cls: 'r', label: 'Supprimer le faux code', sub: 'Le contenu du faux coffre sera effacé', dg: true }]);
+    if (v === 'chg') { const c = await askNewDecoy(); if (!c) return; await mset('key2', await wrap(await decoyKey(), c)); toast('Faux code modifié ✅'); }
+    else if (v === 'off') {
+      const k2 = await decoyKey(), rows = await tx('items', 'readonly', s => s.getAll()), d1 = await db();
+      for (const r of rows) { try { await decJ(k2, r); await new Promise(ok => { const t = d1.transaction(['items', 'blobs'], 'readwrite'); t.objectStore('items').delete(r.id); t.objectStore('blobs').delete(r.id); t.oncomplete = ok; }); } catch (e) {} }
+      await tx('meta', 'readwrite', s => { s.delete('key2'); s.delete('key2r'); return s.delete('albums2'); });
+      toast('Faux code supprimé');
+    }
+    return drawSets();
+  }
+  const ok = await ask({ title: 'Faux code 🎭', text: "Si quelqu'un vous oblige à ouvrir l'appli, tapez le <b>faux code</b> : il ouvre un faux coffre qui a l'air normal, et votre vrai coffre reste invisible.<br><br>Conseil : ouvrez ensuite le faux coffre et ajoutez-y quelques photos banales pour qu'il soit crédible.", ok: 'Créer le faux code' });
+  if (!ok) return;
+  const c = await askNewDecoy(); if (!c) return;
+  const m2 = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  await mset('key2', await wrap(m2, c));
+  await mset('key2r', await encB(KEY, await crypto.subtle.exportKey('raw', m2)));
+  drawSets(); toast('Faux code créé ✅');
+};
+/* Photo de l'intrus */
+$('#r_intr').onclick = async () => {
+  if (CFG.intr) {
+    const v = await sheet("Photo de l'intrus", [{ v: 'off', ico: '📸', cls: 'r', label: 'Désactiver', dg: true }]);
+    if (v === 'off') { CFG.intr = false; await mset('cfg', CFG); drawSets(); }
+    return;
+  }
+  const ok = await ask({ title: "Photo de l'intrus 📸", text: "Après <b>3 codes faux</b>, l'appli prend discrètement une photo avec la caméra avant. Vous la verrez à votre prochaine ouverture.<br><br>Le téléphone va vous demander l'autorisation d'utiliser la caméra : acceptez-la (c'est nécessaire pour que la photo se prenne sans rien afficher).", ok: 'Activer' });
+  if (!ok) return;
+  try {
+    pickerOpen = true;
+    const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false }); st.getTracks().forEach(t => t.stop());
+    if (!(await mget('intrPub'))) {
+      const kp = await crypto.subtle.generateKey({ name: 'RSA-OAEP', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['encrypt', 'decrypt']);
+      await mset('intrPub', await crypto.subtle.exportKey('spki', kp.publicKey));
+      await mset('intrPriv', await encB(KEY, await crypto.subtle.exportKey('pkcs8', kp.privateKey)));
+    }
+    CFG.intr = true; await mset('cfg', CFG); drawSets(); toast("Photo de l'intrus activée ✅");
+  } catch (e) { toast("Accès à la caméra refusé : impossible d'activer", 3500); }
+  finally { pickerOpen = false; }
+};
+/* Historique */
+$('#r_log').onclick = async () => {
+  const log = ((await mget('log')) || []).slice().reverse();
+  if (!log.length) return ask({ title: "Tentatives d'ouverture", text: 'Aucune tentative avec un mauvais code. 👍', ok: 'OK', cancel: '' });
+  const rows = [];
+  for (const e of log.slice(0, 30)) {
+    let u = null; if (e.ph) { try { u = await intrPhotoUrl(e.ph); } catch (x) {} }
+    rows.push(`<div class="lg">${u ? `<img src="${u}" alt="">` : '<span class="ico r" style="width:54px;height:54px;flex:0 0 54px;font-size:22px">✋</span>'}<div>${esc(when(e.t))}<small>Code incorrect · ${esc(e.how || 'code')}</small></div></div>`);
+  }
+  modal(`<h3>Tentatives d'ouverture</h3><div style="max-height:55vh;overflow-y:auto;margin:6px 0 14px">${rows.join('')}</div><div class="btns"><button id="mclr">Effacer</button><button id="mok" class="p">OK</button></div>`);
+  $('#mok').onclick = closeModal;
+  $('#mclr').onclick = async () => { await mset('log', []); closeModal(); drawSets(); toast('Historique effacé'); };
+};
 $('#r_wipe').onclick = async () => {
+  if (DECOY) {
+    const v = await ask({ title: 'Tout effacer ?', text: `Les ${ITEMS.length} fichiers du coffre seront supprimés définitivement. Tapez <b>EFFACER</b> pour confirmer.`, input: '', ph: 'EFFACER', ok: 'Tout effacer', danger: true });
+    if (!v || v.trim().toUpperCase() !== 'EFFACER') return;
+    for (const it of [...ITEMS]) await removeItem(it);
+    ALBUMS = []; await saveAlbums(); render(); show('vault'); return toast('Coffre vidé');
+  }
   const v = await ask({ title: 'Tout effacer ?', text: `Les ${ITEMS.length} fichiers du coffre et votre code seront supprimés <b>de ce téléphone</b>. La sauvegarde en ligne, elle, est conservée (utilisez « Supprimer la sauvegarde en ligne » pour l'effacer aussi).<br><br>Tapez <b>EFFACER</b> pour confirmer.`, input: '', ph: 'EFFACER', ok: 'Tout effacer', danger: true });
   if (!v || v.trim().toUpperCase() !== 'EFFACER') return;
   const d1 = await db();
@@ -751,7 +1258,7 @@ $('#r_bak').onclick = async () => {
   const ok = await ask({ title: 'Créer une sauvegarde', text: `${ITEMS.length} fichiers · ${size(total)}<br><br>Le fichier de sauvegarde reste chiffré : on ne peut l'ouvrir qu'avec votre code actuel. Rangez-le sur une clé USB, un ordinateur ou un cloud.`, ok: 'Créer' });
   if (!ok) return;
   toast('Préparation de la sauvegarde…', 4000);
-  const key = await mget('key'), rows = await tx('items', 'readonly', s => s.getAll());
+  const mine = new Set(ITEMS.map(i => i.id)), key = await mget(DECOY ? 'key2' : 'key'), rows = (await tx('items', 'readonly', s => s.getAll())).filter(r => mine.has(r.id));
   const parts = [], head = { v: 1, date: Date.now(), key: { salt: b64(key.salt), iv: b64(key.iv), w: b64(key.w) }, items: [] };
   for (const r of rows) {
     const b = await tx('blobs', 'readonly', s => s.get(r.id)); if (!b) continue;
@@ -848,8 +1355,8 @@ async function listAll(prefix) {
 }
 const keyJson = k => JSON.stringify({ salt: b64(k.salt), iv: b64(k.iv), w: b64(k.w) });
 
-async function markDirty(id) { const d = (await mget('dirty')) || []; if (!d.includes(id)) d.push(id); await mset('dirty', d); }
-async function pendDel(id) { if (!(await mget('cloud'))) return; const d = (await mget('pendDel')) || []; d.push(id); await mset('pendDel', d); const di = ((await mget('dirty')) || []).filter(x => x !== id); await mset('dirty', di); }
+async function markDirty(id, blob) { if (DECOY) return; const d = (await mget('dirty')) || []; if (!d.includes(id)) d.push(id); await mset('dirty', d); if (blob) { const b = (await mget('dirtyB')) || []; if (!b.includes(id)) b.push(id); await mset('dirtyB', b); } }
+async function pendDel(id) { if (DECOY || !(await mget('cloud'))) return; const d = (await mget('pendDel')) || []; d.push(id); await mset('pendDel', d); const di = ((await mget('dirty')) || []).filter(x => x !== id); await mset('dirty', di); }
 
 function cloudBadge(state) {
   const i = $('#cst'); if (!i) return;
@@ -864,7 +1371,7 @@ async function uploadItem(row) {
   await put(`m/${row.id}.json`, JSON.stringify({ miv: b64(row.iv), m: b64(row.data), biv: b64(b.iv), len, n }), 'application/json');
 }
 async function sync() {
-  if (!CS || !KEY) return cloudBadge();
+  if (!CS || !KEY || DECOY) return cloudBadge();
   if (syncing) { syncAgain = true; return; }
   syncing = true; cloudErr = ''; cloudBadge('run'); drawCloud();
   try {
@@ -878,11 +1385,13 @@ async function sync() {
     }
     const remote = new Set((await listAll('m/')).map(n => n.replace(/\.json$/, '')));
     const dirty = new Set((await mget('dirty')) || []);
-    const rows = await tx('items', 'readonly', s => s.getAll());
-    let todo = rows.filter(r => !remote.has(r.id)), k = 0;
+    const mine = new Set(ITEMS.map(i => i.id));
+    const rows = (await tx('items', 'readonly', s => s.getAll())).filter(r => mine.has(r.id));
+    let dB = new Set((await mget('dirtyB')) || []);
+    let todo = rows.filter(r => !remote.has(r.id) || dB.has(r.id)), k = 0;
     for (const r of todo) {
       cloudStatus(`Envoi ${++k} / ${todo.length}…`);
-      await uploadItem(r); dirty.delete(r.id); await mset('dirty', [...dirty]);
+      await uploadItem(r); dirty.delete(r.id); dB.delete(r.id); await mset('dirty', [...dirty]); await mset('dirtyB', [...dB]);
     }
     for (const id of [...dirty]) {
       const r = rows.find(x => x.id === id);
@@ -1026,7 +1535,7 @@ $('#srest').onclick = async () => {
     try { KEY = await unwrap(rec, pin); break; } catch (e) { KEY = null; }
   }
   if (!KEY) { CS = null; return toast('Trop d’essais'); }
-  await mset('key', rec); CFG.mode = sMode; await mset('cfg', CFG);
+  DECOY = false; await mset('key', rec); CFG.mode = sMode; await mset('cfg', CFG);
   CS.kj = keyJson(rec); await saveCloud();
   ITEMS = []; render(); show('vault');
   try { const r = await pullMissing(); toast(`${r.got} fichier(s) récupéré(s) ✅`, 3000); }
