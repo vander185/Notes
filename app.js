@@ -347,6 +347,43 @@ async function checkIntruders() {
   ask({ title: `⚠️ ${news.length} tentative${news.length > 1 ? 's' : ''} d'ouverture`, text: `Depuis votre dernière visite, quelqu'un a tapé un mauvais code ${news.length} fois (dernière fois : ${when(news[news.length - 1].t)}).${imgs.length ? '<div class="intr">' + imgs.map(u => `<img src="${u}" alt="">`).join('') + '</div>' : ''}`, ok: 'OK', cancel: '' });
 }
 
+/* ---------- Boîte d'arrivée (fichiers envoyés par l'appli Android pendant que le coffre est fermé) ---------- */
+const IS_APK = (() => { try { if (/^android-app:\/\/io\.github\.vander185\.notes/.test(document.referrer)) localStorage.setItem('apk', '1'); return localStorage.getItem('apk') === '1'; } catch (e) { return false; } })();
+async function inboxKeys() {
+  if (DECOY || (await mget('inboxPub'))) return;
+  const kp = await crypto.subtle.generateKey({ name: 'RSA-OAEP', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['encrypt', 'decrypt']);
+  await mset('inboxPriv', await encB(KEY, await crypto.subtle.exportKey('pkcs8', kp.privateKey)));
+  await mset('inboxPub', await crypto.subtle.exportKey('spki', kp.publicKey));
+}
+async function inboxFile() {
+  if (DECOY || !KEY) return;
+  const keys = (await tx('meta', 'readonly', s => s.getAllKeys())).filter(k => /^in_/.test(k));
+  if (!keys.length) return;
+  let priv = null, n = 0;
+  try { const pr = await mget('inboxPriv'); if (pr) priv = await crypto.subtle.importKey('pkcs8', await decB(KEY, pr), { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['decrypt']); } catch (e) {}
+  const bar = $('#bar'); bar.classList.remove('hide');
+  for (const k of keys) {
+    $('#bartxt').textContent = `Rangement dans le coffre ${n + 1} / ${keys.length}`; $('#barp').style.width = (n / keys.length * 100) + '%';
+    try {
+      const r = await mget(k); if (!r) continue;
+      let buf, meta;
+      if (r.raw) { buf = r.data; meta = JSON.parse(dec.decode(r.m)); }
+      else {
+        if (!priv) continue;
+        const ak = await crypto.subtle.importKey('raw', await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, priv, r.k), 'AES-GCM', false, ['decrypt']);
+        meta = JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: r.miv }, ak, r.m)));
+        buf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: r.iv }, ak, r.data);
+      }
+      await addFile(new File([buf], meta.name, { type: meta.type, lastModified: meta.t }));
+      await tx('meta', 'readwrite', s => s.delete(k));
+      n++;
+    } catch (e) { console.warn('inbox', e); }
+  }
+  bar.classList.add('hide');
+  if (n) { ITEMS.sort((a, b) => b.added - a.added); render(); toast(`${n} fichier${n > 1 ? 's' : ''} ajouté${n > 1 ? 's' : ''} depuis la galerie 🔐`, 3500); }
+  try { if (/[?&]shared=/.test(location.search)) history.replaceState(null, '', location.pathname); } catch (e) {}
+}
+
 /* ---------- Ouverture du coffre ---------- */
 let ALBUMS = [], ALBUM = null, SEL = null;
 const albKey = () => DECOY ? 'albums2' : 'albums';
@@ -362,6 +399,7 @@ async function openVault() {
   render(); show('vault'); bumpIdle();
   if (DECOY) { CS = null; GD = null; return; }
   await loadCloud(); await loadDrive();
+  await inboxKeys(); await inboxFile();
   if (GD && !gLive() && navigator.userActivation && navigator.userActivation.isActive) gReconnect(); else sync();
   setTimeout(checkIntruders, 300);
   if (CS && CS.kv !== 2) setTimeout(() => { if (KEY && CS && CS.kv !== 2 && !$('#mod').classList.contains('on')) askUpgrade(); }, 1500);
@@ -558,11 +596,13 @@ let addSrc = 'gal';
 $('#badd').onclick = () => sheet('Ajouter au coffre', [
   { v: 'cam', ico: '📷', cls: 'b', label: 'Prendre une photo', sub: 'Va directement dans le coffre, pas dans la Galerie' },
   { v: 'vid', ico: '🎥', cls: 'r', label: 'Filmer une vidéo', sub: 'Va directement dans le coffre' },
+  ...(IS_APK ? [{ v: 'gdel', ico: '🧹', cls: 'r', label: 'Importer et effacer de la galerie', sub: 'Les originaux sont supprimés du téléphone' }] : []),
   { v: 'gal', ico: '🖼', cls: 'o', label: 'Importer photos et vidéos' },
   { v: 'doc', ico: '📄', cls: 'g', label: 'Importer des documents', sub: 'PDF, Word, fichiers…' },
   { v: 'note', ico: '📝', cls: 'y', label: 'Écrire une note secrète', sub: 'Codes, adresses, infos privées' }
 ], v => {
   if (v === 'note') return setTimeout(newSecretNote, 50);
+  if (v === 'gdel') { pickerOpen = true; setTimeout(() => pickerOpen = false, 120000); location.href = 'intent://import#Intent;scheme=notesimport;package=io.github.vander185.notes;end'; return; }
   const f = $('#fin'); f.value = ''; f.removeAttribute('capture'); addSrc = v;
   if (v === 'cam') { f.accept = 'image/*'; f.setAttribute('capture', 'environment'); f.multiple = false; }
   else if (v === 'vid') { f.accept = 'video/*'; f.setAttribute('capture', 'environment'); f.multiple = false; }
@@ -590,7 +630,7 @@ $('#fin').onchange = async e => {
   ITEMS.sort((a, b) => b.added - a.added); render(); sync();
   if (failed) toast(`${failed} fichier(s) n'ont pas pu être ajoutés (trop lourds ?)`, 4000);
   else if (cam) toast(addSrc === 'vid' ? 'Vidéo cachée dans le coffre 🔐' : 'Photo cachée dans le coffre 🔐');
-  else if (addSrc === 'gal') ask({ title: `${files.length} fichier${files.length > 1 ? 's' : ''} caché${files.length > 1 ? 's' : ''} 🔐`, text: "Ils sont maintenant chiffrés dans votre coffre.<br><br><b>Important :</b> l'appli ne peut pas effacer les originaux. Supprimez-les vous-même de votre Galerie (et de « Récemment supprimés »).<br><br>Astuce : utilisez « Prendre une photo » pour que vos prochaines photos ne passent jamais par la Galerie.", ok: 'OK', cancel: '' });
+  else if (addSrc === 'gal') ask({ title: `${files.length} fichier${files.length > 1 ? 's' : ''} caché${files.length > 1 ? 's' : ''} 🔐`, text: "Ils sont maintenant chiffrés dans votre coffre.<br><br>" + (IS_APK ? "<b>Astuce :</b> la prochaine fois, choisissez « Importer et effacer de la galerie » : les originaux seront supprimés du téléphone automatiquement." : "<b>Important :</b> l'appli ne peut pas effacer les originaux. Supprimez-les vous-même de votre Galerie (et de « Récemment supprimés »).") + "<br><br>Astuce : utilisez « Prendre une photo » pour que vos prochaines photos ne passent jamais par la Galerie.", ok: 'OK', cancel: '' });
   else toast(`${files.length} fichier${files.length > 1 ? 's' : ''} caché${files.length > 1 ? 's' : ''} 🔐`);
 };
 async function storeItem(id, buf, meta) {

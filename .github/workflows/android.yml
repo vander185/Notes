@@ -5,6 +5,8 @@ on:
   push:
     paths: ['android/**', '.github/workflows/android.yml']
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,3 +21,10 @@ jobs:
         with:
           name: notes-unsigned
           path: android/app/build/outputs/apk/release/*.apk
+      # copie aussi l'APK non signé sur la branche apk-build (pour la signature à part)
+      - name: publier sur la branche apk-build
+        run: |
+          mkdir /tmp/out && cp android/app/build/outputs/apk/release/*.apk /tmp/out/notes-unsigned.apk
+          cd /tmp/out && git init -q -b apk-build && git add notes-unsigned.apk
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "APK non signé ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" apk-build
