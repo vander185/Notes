@@ -43,7 +43,11 @@
             "text/plain",
             ".txt",
             ".docx",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".sdocx",
+            "application/octet-stream",
+            "application/zip",
+            "application/sdocx"
           ]
         }
       ]

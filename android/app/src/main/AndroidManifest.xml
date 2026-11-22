@@ -58,10 +58,14 @@
                 <data android:mimeType="image/*" />
                 <data android:mimeType="video/*" />
             </intent-filter>
-            <!-- notes partagées depuis Samsung Notes (texte, fichier texte ou Word) : vont dans le bloc-notes -->
+            <!-- notes partagées depuis Samsung Notes (note Samsung .sdocx, texte, fichier texte ou Word) : vont dans le bloc-notes -->
             <intent-filter android:label="Notes">
                 <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/sdocx" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/zip" />
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="text/html" />
                 <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />

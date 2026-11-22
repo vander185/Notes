@@ -263,10 +263,90 @@ async function zipEntry(buf, want) {   // lit un fichier dans un .docx (zip), sa
   return null;
 }
 const xmlTxt = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (_, d) => String.fromCharCode(+d)).replace(/&amp;/g, '&');
+/* ---------- Lecture des notes Samsung Notes (.sdocx) : titre + texte (pas les dessins) ----------
+   Format décrit par le projet libre « sdocx » (twangodev/sdocx, rétro-ingénierie) ; lecture écrite ici. */
+async function zipBytes(buf, want) {
+  const u8 = new Uint8Array(buf), dv = new DataView(buf);
+  let e = u8.length - 22; while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) return null;
+  let p = dv.getUint32(e + 16, true); const n = dv.getUint16(e + 10, true);
+  for (let i = 0; i < n; i++) {
+    const meth = dv.getUint16(p + 10, true), csz = dv.getUint32(p + 20, true), fl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + fl));
+    if (want instanceof RegExp ? want.test(name) : name === want) {
+      const s = lo + 30 + dv.getUint16(lo + 26, true) + dv.getUint16(lo + 28, true), raw = u8.subarray(s, s + csz);
+      if (meth === 0) return raw.slice();
+      return new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+    }
+    p += 46 + fl + xl + cl;
+  }
+  return null;
+}
+function sdocxText(raw) {
+  const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength); let p = 0;
+  const u8 = () => raw[p++], u16 = () => { const v = dv.getUint16(p, true); p += 2; return v; }, u32 = () => { const v = dv.getUint32(p, true); p += 4; return v; };
+  const mask = () => { const n = u8(); p += n; };
+  /* un objet texte : cadre « base », cadre 6 (forme), cadre 7 (texte) -> texte UTF-16 */
+  const textObj = (b) => {
+    if (!b || b.length < 12) return '';
+    const d = new DataView(b.buffer, b.byteOffset, b.byteLength); let q = 0;
+    const frame = () => {
+      const size = d.getUint32(q, true); if (size < 12 || q + size > b.length) throw new Error('cadre');
+      const data = b.subarray(q + 4, q + size); q += size;
+      const fd = new DataView(data.buffer, data.byteOffset, data.byteLength);
+      const kind = fd.getInt16(0, true), flexOff = fd.getUint32(2, true);
+      let h = 6; const pm = data[h]; h += 1 + pm; const fm = data[h]; const fields = data.subarray(h + 1, h + 1 + fm); h += 1 + fm;
+      const anyField = fields.some(x => x);
+      const fixedEnd = flexOff === 0 && !anyField ? size : flexOff;
+      return { kind, fields, flex: data.subarray(fixedEnd - 4) };
+    };
+    frame(); frame();                     // base de l'objet, forme
+    const t = frame(); if (t.kind !== 7 || !(t.fields[0] & 1)) return '';
+    const f = t.flex, fdv = new DataView(f.buffer, f.byteOffset, f.byteLength);
+    const n = fdv.getUint32(4, true);     // [taille du bloc][nombre de caractères][texte UTF-16]
+    return new TextDecoder('utf-16le').decode(f.subarray(8, 8 + n * 2));
+  };
+  u32(); mask(); mask(); u32();           // en-tête, masques, version
+  const idn = u16(); if (idn !== 0xffff) p += idn * 2;   // identifiant de la note
+  u32();                                  // révision
+  const created = Number(dv.getBigInt64(p, true)); p += 8;
+  const modified = Number(dv.getBigInt64(p, true)); p += 8;
+  p += 16; u32();                         // dimensions, marges, version minimale
+  const ts = u32(); let title = ''; try { title = textObj(raw.subarray(p, p + ts)); } catch (e) {} p += ts;
+  const bs = u32(), bb = raw.subarray(p, p + bs); let body = textObj(bb);
+  if (!body.replace(/[\uFFFC\s]/g, '')) { const r = sdocxRuns(raw.subarray(p)); body = r.filter((x, i) => !r.slice(0, i).some(y => y.includes(x))).join('\n'); }   // texte rangé dans des tableaux
+  const clean = s => s.replace(/\uFFFC/g, '').replace(/[\u2028\u2029\r]/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const okT = t => t > 9.4e11 && t < Date.now() + 864e5;  // millisecondes plausibles
+  return { title: clean(title), body: clean(body), t: okT(modified) ? modified : okT(created) ? created : 0 };
+}
+/* repli : chaînes UTF-16 précédées de leur longueur (u32) — texte des tableaux, zones de texte des pages */
+function sdocxRuns(b) {
+  const d = new DataView(b.buffer, b.byteOffset, b.byteLength), out = [];
+  const ok = c => c === 9 || c === 10 || c === 13 || c === 0x2029 || c === 0x2028 || c === 0xFFFC || (c >= 0x20 && c < 0xD800) || (c >= 0xE000 && c < 0xFFF0);
+  for (let i = 0; i + 6 <= b.length; i++) {
+    const n = d.getUint32(i, true); if (n < 2 || n > 200000 || i + 4 + n * 2 > b.length) continue;
+    let j = 0; for (; j < n; j++) if (!ok(d.getUint16(i + 4 + j * 2, true))) break;
+    if (j < n) continue;
+    const s = new TextDecoder('utf-16le').decode(b.subarray(i + 4, i + 4 + n * 2));
+    if (!/\p{L}/u.test(s) || /^[0-9a-f-]{20,}$/i.test(s)) continue;
+    if (!/^[\t\n\r\u0020-\u024F\u0370-\u06FF\u0750-\u077F\u1E00-\u1EFF\u2000-\u206F\u20A0-\u20CF\uFFFC]+$/.test(s) && (s.length < 4 || !/\s/.test(s))) continue;   // écarte les données binaires qui ressemblent à du texte
+    if ((s.match(/\p{L}/gu) || []).length < 2) continue;
+    out.push(s); i += 3 + n * 2;
+  }
+  return out;
+}
+
 async function noteFromFile(f) {
   const name = (f.name || 'Note').replace(/\.[^.]+$/, '');
   let txt = '';
-  if (/\.docx$/i.test(f.name) || /wordprocessingml/.test(f.type)) {
+  let upd = f.lastModified || Date.now();
+  if (/\.sdocx$/i.test(f.name || '')) {   // note Samsung Notes d'origine
+    const raw = await zipBytes(await f.arrayBuffer(), 'note.note'); if (!raw) return null;
+    const r = sdocxText(raw); if (r.t) upd = r.t;
+    txt = [r.title, r.body].filter(Boolean).join('\n');
+    if (!txt) return null;
+    return { txt: r.title || !name ? txt : name + '\n' + txt, upd };
+  } else if (/\.docx$/i.test(f.name) || /wordprocessingml/.test(f.type)) {
     const x = await zipEntry(await f.arrayBuffer(), 'word/document.xml'); if (!x) return null;
     txt = x.split(/<\/w:p>/).map(p => [...p.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:tab\/>|<w:br\/>/g)].map(m => m[1] != null ? xmlTxt(m[1]) : m[0].includes('tab') ? '\t' : '\n').join('')).join('\n');
   } else if (/\.html?$/i.test(f.name) || /html/.test(f.type)) {
@@ -275,9 +355,9 @@ async function noteFromFile(f) {
   txt = txt.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   if (!txt) return null;
   if (name && !txt.toLowerCase().startsWith(name.toLowerCase()) && !/^(note|memo|texte|text|fichier)[-_ ]?\d*$/i.test(name)) txt = name + '\n' + txt;
-  return { txt, upd: f.lastModified || Date.now() };
+  return { txt, upd };
 }
-const isNoteFile = f => /^text\//.test(f.type || '') || /wordprocessingml|msword/.test(f.type || '') || /\.(txt|md|docx|html?)$/i.test(f.name || '');
+const isNoteFile = f => /^text\//.test(f.type || '') || /wordprocessingml|msword/.test(f.type || '') || /\.(txt|md|docx|sdocx|html?)$/i.test(f.name || '');
 
 async function notesImport(files) {
   let n = 0;
@@ -285,10 +365,10 @@ async function notesImport(files) {
     try { const o = await noteFromFile(f); if (o) { NOTES.push({ id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ...o }); n++; } } catch (e) { console.warn(e); }
   }
   await nSave(); notesDraw();
-  toast(n ? `${n} note${n > 1 ? 's' : ''} importée${n > 1 ? 's' : ''}` : 'Aucune note lisible (formats : texte ou Word)', 3000);
+  toast(n ? `${n} note${n > 1 ? 's' : ''} importée${n > 1 ? 's' : ''}` : 'Aucune note lisible (les notes écrites à la main n’ont pas de texte)', 3000);
 }
 $('#nmore').onclick = () => sheet('Notes', [
-  { v: 'imp', ico: '📥', cls: 'y', label: 'Importer des notes', sub: 'Samsung Notes : exportées en « Fichier texte » ou « Word »' }
+  { v: 'imp', ico: '📥', cls: 'y', label: 'Importer des notes', sub: 'Notes Samsung (.sdocx), texte ou Word' }
 ], v => { if (v === 'imp') { pickerOpen = true; setTimeout(() => pickerOpen = false, 90000); $('#nin').click(); } });
 $('#nin').onchange = e => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) notesImport(fs); };
 // notes reçues pendant que l'appli était fermée (partage depuis Samsung Notes) : déjà rangées par le service worker
