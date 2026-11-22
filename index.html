@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#000000">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; frame-src blob:; connect-src 'self' https://vmhznuivhwwfphmypsic.supabase.co; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; frame-src blob:; connect-src 'self' https://vmhznuivhwwfphmypsic.supabase.co https://www.googleapis.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Notes">
@@ -365,6 +365,18 @@ button.it:active{background:#ffffff0b}
       <p class="hint">Tout part <b>déjà chiffré</b> : même le serveur ne peut pas voir vos fichiers. Sur un nouveau téléphone, choisissez « J'ai déjà un coffre sauvegardé en ligne ».</p>
     </div>
 
+    <div class="sec" id="sec_drive"><h4>Google Drive</h4>
+      <div class="card">
+        <div class="cloud" id="g_box"><div class="ci">🗂</div><div style="flex:1;min-width:0"><b id="g_state">Désactivée</b><small id="g_last">Sauvegarde automatique et cachée dans votre Google Drive (15 Go gratuits).</small></div></div>
+        <button class="cbtn" id="g_on">Activer Google Drive</button>
+        <button class="it hide" id="g_now"><span class="ico b">⟳</span><span class="lb">Synchroniser maintenant</span><span class="ch">›</span></button>
+        <button class="it hide" id="g_pull"><span class="ico t">⬇</span><span class="lb">Récupérer les fichiers manquants<small>Depuis Google Drive</small></span><span class="ch">›</span></button>
+        <button class="it hide" id="g_off"><span class="ico gr">⏏</span><span class="lb">Déconnecter ou supprimer</span><span class="ch">›</span></button>
+        <button class="it" id="g_cid"><span class="ico gr">⚙︎</span><span class="lb">Réglage Google</span><span class="vl" id="g_cidv"></span><span class="ch">›</span></button>
+      </div>
+      <p class="hint">Les fichiers vont dans un dossier <b>caché</b> de votre Drive, déjà chiffrés : Google ne peut pas les voir. Google demandera de vous reconnecter environ une fois par heure d'utilisation : touchez simplement le nuage ☁️.</p>
+    </div>
+
     <div class="sec"><h4>Sauvegarde dans un fichier</h4>
       <div class="card">
         <button class="it" id="r_bak"><span class="ico g">⬇</span><span class="lb">Créer une sauvegarde<small>Fichier chiffré, protégé par un mot de passe</small></span><span class="ch">›</span></button>
@@ -378,7 +390,7 @@ button.it:active{background:#ffffff0b}
         <button class="it dg" id="r_wipe"><span class="ico r">🗑</span><span class="lb">Tout effacer de ce téléphone</span></button>
       </div>
     </div>
-    <p class="foot">Chiffrement AES-256 sur l'appareil<br>Seul votre code peut ouvrir ce coffre<br>Version 5</p>
+    <p class="foot">Chiffrement AES-256 sur l'appareil<br>Seul votre code peut ouvrir ce coffre<br>Version 6</p>
   </div>
   <input type="file" id="rin" class="hide">
 </section>

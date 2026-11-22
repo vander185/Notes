@@ -360,13 +360,15 @@ async function openVault() {
   document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.t === 'all'));
   // en mode faux coffre, l'écran est identique au vrai (sinon on devinerait que c'est un leurre)
   render(); show('vault'); bumpIdle();
-  if (DECOY) { CS = null; return; }
-  await loadCloud(); sync(); setTimeout(checkIntruders, 300);
+  if (DECOY) { CS = null; GD = null; return; }
+  await loadCloud(); await loadDrive();
+  if (GD && !gLive() && navigator.userActivation && navigator.userActivation.isActive) gReconnect(); else sync();
+  setTimeout(checkIntruders, 300);
   if (CS && CS.kv !== 2) setTimeout(() => { if (KEY && CS && CS.kv !== 2 && !$('#mod').classList.contains('on')) askUpgrade(); }, 1500);
 }
 function lockNow() {
   stopShow();
-  KEY = null; ITEMS = []; ALBUMS = []; CS = null; DECOY = false; SEL = null; cloudBadge();
+  KEY = null; ITEMS = []; ALBUMS = []; CS = null; GD = null; DECOY = false; SEL = null; cloudBadge();
   URLS.forEach(u => URL.revokeObjectURL(u)); URLS = [];
   closeViewer(true); closeModal();
   $('#grid').innerHTML = ''; $('#albums').innerHTML = '';
@@ -814,7 +816,7 @@ async function drawSets() {
   $('#e_log').textContent = log.length ? `${log.length} · dernière ${when(log[log.length - 1].t)}` : 'Aucune';
 }
 $('#bset').onclick = async () => {
-  drawSets(); drawCloud(); show('sets'); $('#sets').scrollTop = 0;
+  drawSets(); drawCloud(); drawDrive(); show('sets'); $('#sets').scrollTop = 0;
   const used = ITEMS.reduce((a, i) => a + i.size, 0), c = { photo: 0, video: 0, doc: 0, note: 0 }; ITEMS.forEach(i => c[i.kind]++);
   const parts = [c.photo && `${c.photo} photo${c.photo > 1 ? 's' : ''}`, c.video && `${c.video} vidéo${c.video > 1 ? 's' : ''}`, c.doc && `${c.doc} doc${c.doc > 1 ? 's' : ''}`, c.note && `${c.note} note${c.note > 1 ? 's' : ''}`].filter(Boolean);
   let txt = (parts.join(' · ') || 'Vide') + ' — ' + size(used), pct = 0;
@@ -942,7 +944,7 @@ $('#r_wipe').onclick = async () => {
   if (!v || v.trim().toUpperCase() !== 'EFFACER') return;
   const d1 = await db();
   await new Promise(r => { const t = d1.transaction(['items', 'blobs', 'meta'], 'readwrite'); ['items', 'blobs', 'meta'].forEach(s => t.objectStore(s).clear()); t.oncomplete = r; });
-  KEY = null; ITEMS = []; CS = null; CFG = { mode: 'calc', auto: 0 }; setupFlow();
+  KEY = null; ITEMS = []; CS = null; GD = null; gTok = null; CFG = { mode: 'calc', auto: 0, gcid: CFG.gcid }; setupFlow();
 };
 
 /* ---------- Sauvegarde chiffrée ----------
@@ -1062,13 +1064,13 @@ async function cloudKeyJson(pw) { const r = await wrap(KEY, 'cloud:' + pw); retu
 const recOf = kr => ({ salt: unb64(kr.salt), iv: unb64(kr.iv), w: unb64(kr.w), it: kr.it || OLD_ITER });
 async function cloudUpgrade(pw) { await put('key.json', await cloudKeyJson(pw), 'application/json'); CS.kv = 2; await saveCloud(); }
 
-async function markDirty(id, blob) { if (DECOY) return; const d = (await mget('dirty')) || []; if (!d.includes(id)) d.push(id); await mset('dirty', d); if (blob) { const b = (await mget('dirtyB')) || []; if (!b.includes(id)) b.push(id); await mset('dirtyB', b); } }
-async function pendDel(id) { if (DECOY || !(await mget('cloud'))) return; const d = (await mget('pendDel')) || []; d.push(id); await mset('pendDel', d); const di = ((await mget('dirty')) || []).filter(x => x !== id); await mset('dirty', di); }
+async function markDirty(id, blob) { if (DECOY) return; if (GD) { const g = (await mget('gdirty')) || []; if (!g.includes(id)) g.push(id); await mset('gdirty', g); if (blob) { const gb = (await mget('gdirtyB')) || []; if (!gb.includes(id)) gb.push(id); await mset('gdirtyB', gb); } } const d = (await mget('dirty')) || []; if (!d.includes(id)) d.push(id); await mset('dirty', d); if (blob) { const b = (await mget('dirtyB')) || []; if (!b.includes(id)) b.push(id); await mset('dirtyB', b); } }
+async function pendDel(id) { if (DECOY) return; if (GD) { const g = (await mget('gpendDel')) || []; g.push(id); await mset('gpendDel', g); } if (!(await mget('cloud'))) return; const d = (await mget('pendDel')) || []; d.push(id); await mset('pendDel', d); const di = ((await mget('dirty')) || []).filter(x => x !== id); await mset('dirty', di); }
 
 function cloudBadge(state) {
   const i = $('#cst'); if (!i) return;
-  if (!CS) { i.className = 'off'; i.textContent = '–'; return; }
-  state = state || (cloudErr ? 'err' : 'ok');
+  if (!CS && !GD) { i.className = 'off'; i.textContent = '–'; return; }
+  state = state || ((CS && cloudErr) || (GD && gErr) ? 'err' : (syncing || gSyncing) ? 'run' : 'ok');
   i.className = state; i.textContent = state === 'ok' ? '✓' : state === 'run' ? '↻' : '!';
 }
 async function uploadItem(row) {
@@ -1077,7 +1079,8 @@ async function uploadItem(row) {
   for (let i = 0; i < n; i++) { if (!KEY || !CS) throw new Error('verrouillé'); await put(`b/${row.id}/${i}`, b.data.slice(i * CHUNK, (i + 1) * CHUNK)); }
   await put(`m/${row.id}.json`, JSON.stringify({ miv: b64(row.iv), m: b64(row.data), biv: b64(b.iv), len, n }), 'application/json');
 }
-async function sync() {
+function sync() { sbSync(); gSync(); }
+async function sbSync() {
   if (!CS || !KEY || DECOY) return cloudBadge();
   if (syncing) { syncAgain = true; return; }
   syncing = true; cloudErr = ''; cloudBadge('run'); drawCloud();
@@ -1113,7 +1116,7 @@ async function sync() {
     cloudErr = e.status === 413 ? 'Fichier trop gros pour l’espace en ligne' : /fetch|network|Failed/i.test(e.message) ? 'Pas de connexion internet' : e.message;
   } finally {
     syncing = false; cloudStatus(''); cloudBadge(); drawCloud();
-    if (syncAgain && KEY && CS) { syncAgain = false; setTimeout(sync, 500); }
+    if (syncAgain && KEY && CS) { syncAgain = false; setTimeout(sbSync, 500); }
   }
 }
 let cMsg = '';
@@ -1132,9 +1135,9 @@ function drawCloud() {
     : cloudErr ? cloudErr
     : CS.email + (CS.last ? ' · dernière synchro à ' + new Date(CS.last).toLocaleTimeString('fr-BE', { hour: '2-digit', minute: '2-digit' }) : '');
 }
-$('#bcloud').onclick = () => $('#bset').click();
+$('#bcloud').onclick = () => { if (GD && !gLive() && !DECOY) return gReconnect(); $('#bset').click(); };
 window.addEventListener('online', () => sync());
-setInterval(() => { if (KEY && CS && !syncing) sync(); }, 10 * 60000);
+setInterval(() => { if (KEY && (CS || GD) && !syncing && !gSyncing) sync(); }, 10 * 60000);
 
 /* Fenêtre e-mail + mot de passe */
 function askLogin(title, text) {
@@ -1238,7 +1241,11 @@ $('#c_pull').onclick = async () => {
 };
 
 /* Nouveau téléphone : récupérer tout le coffre */
-$('#srest').onclick = async () => {
+$('#srest').onclick = () => sheet('Où est votre sauvegarde ?', [
+  { v: 'g', ico: '🗂', cls: 'y', label: 'Google Drive', sub: 'Connexion avec votre compte Google' },
+  { v: 's', ico: '☁️', cls: 'b', label: 'Compte de sauvegarde', sub: 'E-mail et mot de passe' }
+], v => { if (v === 'g') gRestore(); else if (v === 's') setTimeout(sbRestore, 50); });
+async function sbRestore() {
   const j = await askLogin('Récupérer mon coffre', "Connectez-vous avec le compte de sauvegarde que vous aviez créé.");
   if (!j) return;
   setSession(j);
@@ -1274,5 +1281,242 @@ $('#srest').onclick = async () => {
   await openVault();
   if (CFG.mode === 'calc') ask({ title: 'Coffre récupéré ✅', text: "Pour l'ouvrir à l'avenir : <b>tapez votre code dans « Rechercher »</b> du bloc-notes.", ok: 'OK', cancel: '' });
 };
+
+/* =========================================================
+   Sauvegarde automatique Google Drive
+   Les fichiers vont dans le dossier CACHÉ de l'appli sur Drive (invisible dans la liste
+   de vos fichiers Drive). Tout part déjà chiffré. La clé du coffre y est protégée par un
+   « mot de passe de sauvegarde Drive » (jamais par le code à chiffres).
+   ========================================================= */
+const GCLIENT_DEFAULT = '';   // identifiant OAuth Google (public, ce n'est pas un secret)
+const GSCOPE = 'https://www.googleapis.com/auth/drive.appdata', GAPI = 'https://www.googleapis.com';
+let GD = null, gTok = null, gExp = 0, gSyncing = false, gAgain = false, gErr = '', gMsg = '';
+const gClient = () => (CFG.gcid || GCLIENT_DEFAULT).trim();
+const gRedirect = () => location.origin + location.pathname.replace(/[^/]*$/, '') + 'oauth.html';
+const gLive = () => !!gTok && Date.now() < gExp;
+const AUTHMSG = 'Touchez le nuage ☁️ pour reconnecter Google Drive';
+
+/* Connexion Google : à appeler pendant un toucher (sinon le téléphone bloque la fenêtre) */
+function gAuth() {
+  return new Promise((ok, ko) => {
+    if (!gClient()) return ko(new Error('noclient'));
+    const st = b64(rnd(18)).replace(/[^a-z0-9]/gi, '');
+    const q = { client_id: gClient(), redirect_uri: gRedirect(), response_type: 'token', scope: GSCOPE, state: st, include_granted_scopes: 'true' };
+    if (GD && GD.email) q.login_hint = GD.email;
+    let done = false, bc = null;
+    const fin = (err, v) => { if (done) return; done = true; try { bc && bc.close(); } catch (e) {} window.removeEventListener('message', onMsg); clearTimeout(to); setTimeout(() => pickerOpen = false, 1500); err ? ko(err) : ok(v); };
+    const got = d => { if (!d || d.state !== st) return; if (d.error || !d.token) return fin(new Error(d.error || 'refus')); gTok = d.token; gExp = Date.now() + (d.exp - 120) * 1000; fin(null, gTok); };
+    try { bc = new BroadcastChannel('notes-oauth'); bc.onmessage = e => got(e.data); } catch (e) {}
+    const onMsg = e => { if (e.origin === location.origin) got(e.data); };
+    window.addEventListener('message', onMsg);
+    const to = setTimeout(() => fin(new Error('timeout')), 240000);
+    pickerOpen = true;
+    const w = window.open('https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams(q), 'notes_google');
+    if (!w) fin(new Error('popup'));
+  });
+}
+async function gfetch(path, opt = {}) {
+  if (!gLive()) throw Object.assign(new Error(AUTHMSG), { auth: 1 });
+  const r = await fetch(GAPI + path, { ...opt, headers: { Authorization: 'Bearer ' + gTok, ...(opt.headers || {}) } });
+  if (r.status === 401) { gTok = null; throw Object.assign(new Error(AUTHMSG), { auth: 1 }); }
+  if (!r.ok) { const t = await r.text().catch(() => ''); const e = new Error('Drive ' + r.status + ' ' + t.slice(0, 140)); e.status = r.status; throw e; }
+  return r;
+}
+async function gList() {
+  const out = {}; let pt = '';
+  do {
+    const p = { spaces: 'appDataFolder', fields: 'nextPageToken,files(id,name)', pageSize: '1000' }; if (pt) p.pageToken = pt;
+    const j = await (await gfetch('/drive/v3/files?' + new URLSearchParams(p))).json();
+    (j.files || []).forEach(f => out[f.name] = f.id); pt = j.nextPageToken;
+  } while (pt);
+  return out;
+}
+async function gPut(name, body, type, map) {
+  const id = map[name];
+  if (id) { await gfetch(`/upload/drive/v3/files/${id}?uploadType=media`, { method: 'PATCH', headers: { 'Content-Type': type }, body }); return id; }
+  const r = await gfetch('/upload/drive/v3/files?uploadType=resumable&fields=id', { method: 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': type }, body: JSON.stringify({ name, parents: ['appDataFolder'] }) });
+  const loc = r.headers.get('Location');
+  let j;
+  if (loc) {
+    const u = await fetch(loc, { method: 'PUT', headers: { 'Content-Type': type }, body });
+    if (!u.ok) { const e = new Error('Drive envoi ' + u.status); e.status = u.status; throw e; }
+    j = await u.json();
+  } else {   // secours : création puis contenu
+    j = await (await gfetch('/drive/v3/files?fields=id', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, parents: ['appDataFolder'] }) })).json();
+    await gfetch(`/upload/drive/v3/files/${j.id}?uploadType=media`, { method: 'PATCH', headers: { 'Content-Type': type }, body });
+  }
+  map[name] = j.id; return j.id;
+}
+const gGet = id => gfetch(`/drive/v3/files/${id}?alt=media`);
+const gDel = id => gfetch(`/drive/v3/files/${id}`, { method: 'DELETE' }).catch(e => { if (e.status !== 404) throw e; });
+
+async function saveDrive() { if (GD && KEY && !DECOY) await mset('gdrive', await encJ(KEY, GD)); }
+async function loadDrive() { const r = await mget('gdrive'); GD = null; if (r) { try { GD = await decJ(KEY, r); } catch (e) {} } }
+async function gMetaJson(r) { const b = await tx('blobs', 'readonly', s => s.get(r.id)); return JSON.stringify({ miv: b64(r.iv), m: b64(r.data), biv: b64(b.iv), len: b.data.byteLength }); }
+
+async function gSync() {
+  if (!GD || !KEY || DECOY) return;
+  if (gSyncing) { gAgain = true; return; }
+  if (!gLive()) { gErr = AUTHMSG; cloudBadge(); drawDrive(); return; }
+  gSyncing = true; gErr = ''; cloudBadge('run'); drawDrive();
+  try {
+    const map = await gList();
+    let pd = (await mget('gpendDel')) || [];
+    for (const id of [...pd]) {
+      for (const n of [`m_${id}.json`, `b_${id}`]) if (map[n]) { await gDel(map[n]); delete map[n]; }
+      pd = pd.filter(x => x !== id); await mset('gpendDel', pd);
+    }
+    const mine = new Set(ITEMS.map(i => i.id));
+    const rows = (await tx('items', 'readonly', s => s.getAll())).filter(r => mine.has(r.id));
+    const dB = new Set((await mget('gdirtyB')) || []), dM = new Set((await mget('gdirty')) || []);
+    const todo = rows.filter(r => !map[`m_${r.id}.json`] || !map[`b_${r.id}`] || dB.has(r.id));
+    let k = 0;
+    for (const r of todo) {
+      if (!KEY || !GD) throw new Error('verrouillé');
+      gStatus(`Envoi vers Drive ${++k} / ${todo.length}…`);
+      const b = await tx('blobs', 'readonly', s => s.get(r.id)); if (!b) continue;
+      await gPut(`b_${r.id}`, b.data, 'application/octet-stream', map);   // le contenu d'abord…
+      await gPut(`m_${r.id}.json`, await gMetaJson(r), 'application/json', map);   // …puis la fiche
+      dB.delete(r.id); dM.delete(r.id); await mset('gdirtyB', [...dB]); await mset('gdirty', [...dM]);
+    }
+    for (const id of [...dM]) {
+      const r = rows.find(x => x.id === id);
+      if (r && map[`m_${id}.json`]) await gPut(`m_${id}.json`, await gMetaJson(r), 'application/json', map);
+      dM.delete(id); await mset('gdirty', [...dM]);
+    }
+    GD.last = Date.now(); await saveDrive();
+  } catch (e) {
+    console.warn('drive', e);
+    gErr = e.auth ? AUTHMSG : e.status === 403 && /quota|storage/i.test(e.message) ? 'Google Drive est plein' : /fetch|network|Failed/i.test(e.message) ? 'Pas de connexion internet' : e.message;
+  } finally {
+    gSyncing = false; gStatus(''); cloudBadge();
+    if (gAgain && KEY && GD) { gAgain = false; setTimeout(gSync, 500); }
+  }
+}
+function gStatus(t) { gMsg = t; drawDrive(); }
+function drawDrive() {
+  if (!$('#g_state')) return;
+  const on = !!GD;
+  $('#g_on').classList.toggle('hide', on);
+  ['g_now', 'g_pull', 'g_off'].forEach(i => $('#' + i).classList.toggle('hide', !on));
+  $('#g_box').classList.toggle('on', on && !gErr);
+  $('#g_box .ci').textContent = !on ? '🗂' : gMsg ? '⏳' : gErr ? '⚠️' : '✅';
+  $('#g_state').textContent = !on ? 'Désactivée' : gMsg ? 'Synchronisation…' : gErr ? 'À reconnecter' : 'Activée';
+  $('#g_last').textContent = !on ? 'Sauvegarde automatique et cachée dans votre Google Drive (15 Go gratuits).'
+    : gMsg ? gMsg : gErr ? gErr
+    : (GD.email || 'Google Drive') + (GD.last ? ' · dernière synchro à ' + new Date(GD.last).toLocaleTimeString('fr-BE', { hour: '2-digit', minute: '2-digit' }) : '');
+  $('#g_cidv').textContent = gClient() ? 'Configuré' : 'À configurer';
+}
+/* Reconnexion (toucher le nuage, ou automatiquement juste après l'ouverture du coffre) */
+async function gReconnect() {
+  try { await gAuth(); gErr = ''; drawDrive(); gSync(); return true; }
+  catch (e) { gErr = e.message === 'popup' ? 'Fenêtre bloquée : touchez le nuage ☁️' : AUTHMSG; cloudBadge(); drawDrive(); return false; }
+}
+async function askDrivePw(confirm) {
+  const p1 = await ask({ title: 'Mot de passe de sauvegarde Drive', text: confirm ? 'Choisissez un mot de passe (8 caractères minimum). Il protège la clé de votre coffre sur Drive et vous sera demandé sur un nouveau téléphone. <b>Notez-le bien.</b>' : 'Entrez le mot de passe de sauvegarde Drive :', input: '', ph: 'Mot de passe', ok: confirm ? 'Suivant' : 'Ouvrir', pw: 'txt' });
+  if (p1 === null) return null;
+  if (p1.length < 8) { toast('8 caractères minimum', 3000); return null; }
+  if (!confirm) return p1;
+  const p2 = await ask({ title: 'Confirmez le mot de passe', input: '', ph: 'Mot de passe', ok: 'Continuer avec Google', pw: 'txt' });
+  if (p2 !== p1) { toast('Les deux mots de passe sont différents', 3000); return null; }
+  return p1;
+}
+async function gEmail() { try { return (await (await gfetch('/drive/v3/about?fields=user(emailAddress)')).json()).user.emailAddress; } catch (e) { return ''; } }
+const gKeyJson = async pw => { const r = await wrap(KEY, 'gdrive:' + pw); return JSON.stringify({ v: 2, it: r.it, salt: b64(r.salt), iv: b64(r.iv), w: b64(r.w) }); };
+
+async function gSetupClient() {
+  const v = await ask({ title: 'Identifiant Google', text: `Collez l'« ID client » créé dans Google Cloud.<br><br>Adresse de retour à déclarer :<br><b style="word-break:break-all">${esc(gRedirect())}</b>`, input: CFG.gcid || '', ph: '…apps.googleusercontent.com', ok: 'Enregistrer' });
+  if (v === null) return false;
+  if (v.trim() && !/\.apps\.googleusercontent\.com$/.test(v.trim())) { toast('Cet identifiant ne semble pas correct', 3500); return false; }
+  CFG.gcid = v.trim(); await mset('cfg', CFG); drawDrive(); return !!gClient();
+}
+$('#g_cid').onclick = async () => {
+  const v = await sheet('Réglage Google Drive', [{ v: 'copy', ico: '📋', cls: 'b', label: 'Copier l’adresse de retour', sub: gRedirect() }, { v: 'id', ico: '🔑', cls: 'gr', label: 'Identifiant Google (ID client)', sub: gClient() || 'Pas encore configuré' }]);
+  if (v === 'copy') { try { await navigator.clipboard.writeText(gRedirect()); toast('Adresse copiée ✅'); } catch (e) { toast(gRedirect(), 6000); } }
+  else if (v === 'id') gSetupClient();
+};
+$('#g_on').onclick = async () => {
+  if (DECOY) return toast('Pas de connexion internet', 2500);
+  if (!gClient() && !(await gSetupClient())) return;
+  const pw = await askDrivePw(true); if (!pw) return;
+  try { await gAuth(); } catch (e) { return toast(e.message === 'popup' ? 'Fenêtre Google bloquée : réessayez' : 'Connexion Google annulée', 3500); }
+  try {
+    gStatus('Préparation…');
+    const map = await gList();
+    if (map['key.json']) {   // un coffre existe déjà sur ce Drive : est-ce le même ?
+      let same = false;
+      try { const kr = await (await gGet(map['key.json'])).json(); const k = await unwrap(recOf(kr), 'gdrive:' + pw); same = b64(await crypto.subtle.exportKey('raw', k)) === b64(await crypto.subtle.exportKey('raw', KEY)); } catch (e) {}
+      if (!same) { gStatus(''); return ask({ title: 'Un autre coffre est sur ce Drive', text: "Ce compte Google contient déjà un coffre (ou un autre mot de passe). Pour le récupérer : « Tout effacer », puis « J'ai déjà un coffre sauvegardé en ligne » → Google Drive.", ok: 'OK', cancel: '' }); }
+    }
+    await gPut('key.json', await gKeyJson(pw), 'application/json', map);
+    GD = { email: await gEmail(), last: 0 }; await saveDrive();
+    await mset('gdirty', []); await mset('gdirtyB', []); await mset('gpendDel', []);
+    gStatus(''); toast('Google Drive activé ☁️'); gSync();
+  } catch (e) { gStatus(''); GD = null; toast('Échec : ' + e.message, 4000); }
+};
+$('#g_now').onclick = () => gLive() ? gSync() : gReconnect();
+$('#g_pull').onclick = async () => {
+  if (!gLive() && !(await gReconnect())) return;
+  try { gStatus('Recherche…'); const r = await gPullMissing(); gStatus(''); show('vault'); toast(r.got ? `${r.got} fichier(s) récupéré(s) ✅` : 'Rien à récupérer : tout est déjà là'); }
+  catch (e) { gStatus(''); toast('Échec : ' + e.message, 4000); }
+};
+$('#g_off').onclick = async () => {
+  const v = await sheet('Google Drive', [{ v: 'off', ico: '⏏', cls: 'gr', label: 'Déconnecter', sub: 'La sauvegarde déjà sur Drive est conservée' }, { v: 'del', ico: '🗑', cls: 'r', label: 'Supprimer la sauvegarde Drive', sub: 'Efface tout le coffre de Google Drive', dg: true }]);
+  if (v === 'off') { await tx('meta', 'readwrite', s => s.delete('gdrive')); GD = null; gTok = null; gErr = ''; cloudBadge(); drawDrive(); toast('Google Drive déconnecté'); }
+  else if (v === 'del') {
+    const c = await ask({ title: 'Supprimer la sauvegarde Drive ?', text: 'Tapez <b>EFFACER</b> pour confirmer.', input: '', ph: 'EFFACER', ok: 'Supprimer', danger: true });
+    if (!c || c.trim().toUpperCase() !== 'EFFACER') return;
+    if (!gLive() && !(await gReconnect())) return;
+    try { gStatus('Suppression…'); const map = await gList(); for (const id of Object.values(map)) await gDel(id); await tx('meta', 'readwrite', s => s.delete('gdrive')); GD = null; gErr = ''; gStatus(''); cloudBadge(); toast('Sauvegarde Drive supprimée'); }
+    catch (e) { gStatus(''); toast('Échec : ' + e.message, 4000); }
+  }
+};
+async function gPullMissing() {
+  const map = await gList(), have = new Set(await tx('items', 'readonly', s => s.getAllKeys()));
+  const todo = Object.keys(map).filter(n => /^m_.+\.json$/.test(n)).map(n => n.slice(2, -5)).filter(id => !have.has(id) && map[`b_${id}`]);
+  let n = 0, bad = 0;
+  if (todo.length) $('#bar').classList.remove('hide');
+  for (const id of todo) {
+    $('#bartxt').textContent = `Récupération ${++n} / ${todo.length}`; $('#barp').style.width = (n / todo.length * 100) + '%';
+    try {
+      const o = await (await gGet(map[`m_${id}.json`])).json();
+      const meta = await decJ(KEY, { iv: unb64(o.miv), data: unb64(o.m) });
+      const data = await (await gGet(map[`b_${id}`])).arrayBuffer();
+      const d1 = await db();
+      await new Promise((ok, ko) => { const t = d1.transaction(['items', 'blobs'], 'readwrite'); t.objectStore('blobs').put({ id, iv: unb64(o.biv), data }); t.objectStore('items').put({ id, iv: unb64(o.miv), data: unb64(o.m) }); t.oncomplete = ok; t.onerror = () => ko(t.error); });
+      ITEMS.push({ id, ...meta });
+    } catch (e) { bad++; console.warn(e); }
+  }
+  $('#bar').classList.add('hide');
+  ITEMS.sort((a, b) => b.added - a.added); render();
+  return { got: todo.length - bad, bad };
+}
+/* Nouveau téléphone : récupérer le coffre depuis Google Drive */
+async function gRestore() {
+  if (!gClient() && !(await gSetupClient())) return;
+  try { await gAuth(); } catch (e) { return toast(e.message === 'popup' ? 'Fenêtre Google bloquée : réessayez' : 'Connexion Google annulée', 3500); }
+  let map, kr;
+  try { map = await gList(); if (!map['key.json']) throw 0; kr = await (await gGet(map['key.json'])).json(); }
+  catch (e) { return ask({ title: 'Aucun coffre sur ce Drive', text: 'Ce compte Google ne contient pas de coffre sauvegardé.', ok: 'OK', cancel: '' }); }
+  for (let tries = 0; tries < 5 && !KEY; tries++) {
+    const pw = await askDrivePw(false); if (pw === null) return;
+    try { KEY = await unwrap(recOf(kr), 'gdrive:' + pw); } catch (e) { KEY = null; toast('Mot de passe incorrect', 2500); }
+  }
+  if (!KEY) return;
+  let pin = null;
+  while (pin === null) {
+    const p1 = await ask({ title: 'Code de ce téléphone', text: 'Choisissez le code secret (6 à 12 chiffres) pour ouvrir le coffre sur ce téléphone :', input: '', ph: '••••••', ok: 'Suivant', pw: true, cancel: '' });
+    if (!/^\d{6,12}$/.test(p1 || '')) { toast('Le code doit faire 6 à 12 chiffres'); continue; }
+    const p2 = await ask({ title: 'Confirmez le code', input: '', ph: '••••••', ok: 'Valider', pw: true, cancel: '' });
+    if (p2 === p1) pin = p1; else toast('Les deux codes sont différents');
+  }
+  DECOY = false;
+  await mset('key', await wrap(KEY, pin)); CFG.mode = sMode; await mset('cfg', CFG);
+  GD = { email: await gEmail(), last: Date.now() }; await saveDrive();
+  ITEMS = []; render(); show('vault');
+  try { const r = await gPullMissing(); toast(`${r.got} fichier(s) récupéré(s) ✅`, 3000); } catch (e) { toast('Récupération interrompue : ' + e.message, 4000); }
+  await openVault();
+  if (CFG.mode === 'calc') ask({ title: 'Coffre récupéré ✅', text: "Pour l'ouvrir à l'avenir : <b>tapez votre code dans « Rechercher »</b> du bloc-notes.", ok: 'OK', cancel: '' });
+}
 
 start();
