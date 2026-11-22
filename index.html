@@ -243,7 +243,8 @@ button.it:active{background:#ffffff0b}
 
 <!-- 1. Bloc-notes (leurre) -->
 <section id="notes" class="scr">
-  <div class="ntop"><span><svg class="i"><use href="#i-left"/></svg>Dossiers</span><span><svg class="i"><use href="#i-more"/></svg></span></div>
+  <div class="ntop"><span><svg class="i"><use href="#i-left"/></svg>Dossiers</span><button id="nmore" aria-label="Plus" style="color:inherit;display:flex"><svg class="i"><use href="#i-more"/></svg></button></div>
+  <input type="file" id="nin" accept=".txt,.md,.docx,.html,.htm,text/plain,text/markdown,text/html,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
   <div class="nh"><h1>Notes</h1><input id="nsearch" type="search" placeholder="Rechercher" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
   <div id="nlist"></div>
   <div class="nfoot"><span id="ncount"></span><button id="nnew" aria-label="Nouvelle note"><svg class="i"><use href="#i-compose"/></svg></button></div>

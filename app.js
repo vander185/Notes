@@ -244,6 +244,56 @@ $('#nnew').onclick = () => { const n = { id: 'n' + Date.now().toString(36), txt:
 $('#ntext').addEventListener('input', () => { if (!curNote) return; curNote.txt = $('#ntext').value; curNote.upd = Date.now(); clearTimeout(nT); nT = setTimeout(nSave, 400); });
 $('#nback').onclick = async () => { if (curNote && !curNote.txt.trim()) NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave(); };
 $('#ndel').onclick = async () => { NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave(); };
+/* ---------- Lecture des notes importées (Samsung Notes : « Fichier texte » ou « Word ») ---------- */
+async function zipEntry(buf, want) {   // lit un fichier dans un .docx (zip), sans bibliothèque
+  const u8 = new Uint8Array(buf), dv = new DataView(buf);
+  let e = u8.length - 22; while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) return null;
+  let p = dv.getUint32(e + 16, true); const n = dv.getUint16(e + 10, true);
+  for (let i = 0; i < n; i++) {
+    const meth = dv.getUint16(p + 10, true), csz = dv.getUint32(p + 20, true), fl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + fl));
+    if (name === want) {
+      const s = lo + 30 + dv.getUint16(lo + 26, true) + dv.getUint16(lo + 28, true), raw = u8.subarray(s, s + csz);
+      if (meth === 0) return new TextDecoder().decode(raw);
+      return await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+    }
+    p += 46 + fl + xl + cl;
+  }
+  return null;
+}
+const xmlTxt = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (_, d) => String.fromCharCode(+d)).replace(/&amp;/g, '&');
+async function noteFromFile(f) {
+  const name = (f.name || 'Note').replace(/\.[^.]+$/, '');
+  let txt = '';
+  if (/\.docx$/i.test(f.name) || /wordprocessingml/.test(f.type)) {
+    const x = await zipEntry(await f.arrayBuffer(), 'word/document.xml'); if (!x) return null;
+    txt = x.split(/<\/w:p>/).map(p => [...p.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:tab\/>|<w:br\/>/g)].map(m => m[1] != null ? xmlTxt(m[1]) : m[0].includes('tab') ? '\t' : '\n').join('')).join('\n');
+  } else if (/\.html?$/i.test(f.name) || /html/.test(f.type)) {
+    txt = xmlTxt((await f.text()).replace(/<(br|\/p|\/div|\/li|\/h\d)[^>]*>/gi, '\n').replace(/<[^>]+>/g, ''));
+  } else txt = await f.text();
+  txt = txt.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (!txt) return null;
+  if (name && !txt.toLowerCase().startsWith(name.toLowerCase()) && !/^(note|memo|texte|text|fichier)[-_ ]?\d*$/i.test(name)) txt = name + '\n' + txt;
+  return { txt, upd: f.lastModified || Date.now() };
+}
+const isNoteFile = f => /^text\//.test(f.type || '') || /wordprocessingml|msword/.test(f.type || '') || /\.(txt|md|docx|html?)$/i.test(f.name || '');
+
+async function notesImport(files) {
+  let n = 0;
+  for (const f of files) {
+    try { const o = await noteFromFile(f); if (o) { NOTES.push({ id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ...o }); n++; } } catch (e) { console.warn(e); }
+  }
+  await nSave(); notesDraw();
+  toast(n ? `${n} note${n > 1 ? 's' : ''} importée${n > 1 ? 's' : ''}` : 'Aucune note lisible (formats : texte ou Word)', 3000);
+}
+$('#nmore').onclick = () => sheet('Notes', [
+  { v: 'imp', ico: '📥', cls: 'y', label: 'Importer des notes', sub: 'Samsung Notes : exportées en « Fichier texte » ou « Word »' }
+], v => { if (v === 'imp') { pickerOpen = true; setTimeout(() => pickerOpen = false, 90000); $('#nin').click(); } });
+$('#nin').onchange = e => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) notesImport(fs); };
+// notes reçues pendant que l'appli était fermée (partage depuis Samsung Notes) : déjà rangées par le service worker
+(() => { const m = /[?&]notes=(\d+)/.exec(location.search); if (m && +m[1]) setTimeout(() => toast(`${m[1]} note${+m[1] > 1 ? 's' : ''} importée${+m[1] > 1 ? 's' : ''}`, 3000), 800); })();
+
 // Porte secrète : le code tapé dans « Rechercher »
 let sT, sTried = '';
 async function secretTry() {

@@ -46,7 +46,8 @@ public class ImportActivity extends Activity {
 
     private final ArrayList<Uri> sources = new ArrayList<>();
     private final ArrayList<Uri> copies = new ArrayList<>();
-    private boolean askedPermission = false;
+    private boolean askedPermission = false, pickAfterPermission = false;
+    private final ArrayList<Uri> media = new ArrayList<>();   // sources qui sont des photos/vidéos (les seules à effacer)
 
     @Override
     protected void onCreate(Bundle state) {
@@ -57,25 +58,64 @@ public class ImportActivity extends Activity {
         if (Intent.ACTION_SEND.equals(action)) {
             Uri u = in.getParcelableExtra(Intent.EXTRA_STREAM);
             if (u != null) sources.add(u);
+            else {
+                // texte partagé (ex. Samsung Notes) : on en fait un petit fichier texte pour le bloc-notes
+                CharSequence t = in.getCharSequenceExtra(Intent.EXTRA_TEXT);
+                String subj = in.getStringExtra(Intent.EXTRA_SUBJECT);
+                if (t != null && t.length() > 0) {
+                    Uri f = writeText((subj != null && !subj.isEmpty() && !t.toString().startsWith(subj) ? subj + "\n" : "") + t);
+                    if (f != null) { copies.add(f); openVault(); return; }
+                }
+            }
         } else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
             ArrayList<Uri> l = in.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
             if (l != null) sources.addAll(l);
         } else {
-            // bouton « Importer et effacer de la galerie » dans l'appli : on ouvre le sélecteur de fichiers
-            Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            pick.addCategory(Intent.CATEGORY_OPENABLE);
-            pick.setType("*/*");
-            pick.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
-            pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-            try {
-                startActivityForResult(pick, REQ_PICK);
-            } catch (Exception e) {
-                toast("Impossible d'ouvrir la galerie");
-                finish();
-            }
+            // bouton « Importer et effacer de la galerie » : d'abord l'accès aux photos (pour retrouver les originaux), puis la Galerie
+            if (!canReadMedia() && Build.VERSION.SDK_INT >= 23) {
+                askedPermission = true; pickAfterPermission = true;
+                requestPermissions(mediaPerms(), REQ_PERM);
+            } else pickFromGallery();
             return;
         }
         start();
+    }
+
+    private String[] mediaPerms() {
+        return Build.VERSION.SDK_INT >= 33
+                ? new String[]{Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO}
+                : new String[]{Manifest.permission.READ_EXTERNAL_STORAGE};
+    }
+
+    /* La Galerie du téléphone (grille de photos), pas le gestionnaire de fichiers */
+    private void pickFromGallery() {
+        Intent pick = new Intent(Intent.ACTION_GET_CONTENT);
+        pick.setType("image/*");
+        pick.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
+        pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        pick.addCategory(Intent.CATEGORY_OPENABLE);
+        try {
+            startActivityForResult(pick, REQ_PICK);
+        } catch (Exception e) {
+            toast("Impossible d'ouvrir la galerie");
+            finish();
+        }
+    }
+
+    private Uri writeText(String text) {
+        try {
+            File dir = new File(getCacheDir(), "inbox/" + System.nanoTime());
+            if (!dir.mkdirs()) return null;
+            File out = new File(dir, "Note.txt");
+            try (OutputStream os = new FileOutputStream(out)) { os.write(text.getBytes("UTF-8")); }
+            return FileProvider.getUriForFile(this, getPackageName() + ".files", out);
+        } catch (Exception e) { return null; }
+    }
+
+    private boolean isMedia(Uri u) {
+        String t = null;
+        try { t = getContentResolver().getType(u); } catch (Exception ignored) { }
+        return t != null && (t.startsWith("image/") || t.startsWith("video/"));
     }
 
     private void start() {
@@ -84,11 +124,12 @@ public class ImportActivity extends Activity {
         new Thread(() -> {
             for (Uri u : sources) {
                 Uri c = copy(u);
-                if (c != null) copies.add(c);
+                if (c != null) { copies.add(c); if (isMedia(u)) media.add(u); }
             }
             runOnUiThread(() -> {
                 if (copies.isEmpty()) { toast("Aucun fichier n'a pu être lu"); finish(); return; }
-                if (copies.size() < sources.size()) toast((sources.size() - copies.size()) + " fichier(s) illisible(s) : ils restent dans la galerie");
+                if (copies.size() < sources.size()) toast((sources.size() - copies.size()) + " fichier(s) illisible(s) : ils restent sur le téléphone");
+                if (media.isEmpty()) { openVault(); return; }   // notes ou documents : rien à effacer
                 askDelete();
             });
         }).start();
@@ -151,7 +192,20 @@ public class ImportActivity extends Activity {
     private Uri toMedia(Uri u) {
         if (u == null) return null;
         String auth = u.getAuthority();
-        if ("media".equals(auth)) return u;
+        if ("media".equals(auth) || "media_picker".equals(auth)) {
+            String path = u.getPath() != null ? u.getPath() : "";
+            if (!path.contains("picker")) return u;
+            // sélecteur de photos d'Android : même numéro que dans la galerie pour les photos du téléphone
+            try {
+                long id = Long.parseLong(u.getLastPathSegment());
+                String t = getContentResolver().getType(u);
+                Uri m = ContentUris.withAppendedId(t != null && t.startsWith("video/") ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI : MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+                if (!canReadMedia()) return m;   // Android montre de toute façon les photos avant d'effacer
+                String a = displayName(u), b = displayName(m);
+                if (a != null && a.equals(b)) return m;
+            } catch (Exception ignored) { }
+            return byNameAndSize(u);
+        }
         try {
             if ("com.android.providers.media.documents".equals(auth) && DocumentsContract.isDocumentUri(this, u)) {
                 String[] p = DocumentsContract.getDocumentId(u).split(":");
@@ -200,21 +254,18 @@ public class ImportActivity extends Activity {
 
     /* ---------- Effacer les originaux (Android demande confirmation) ---------- */
     private void askDelete() {
-        List<Uri> media = new ArrayList<>();
         int unknown = 0;
-        for (Uri s : sources) {
+        List<Uri> found = new ArrayList<>();
+        for (Uri s : media) {
             Uri m = toMedia(s);
-            if (m != null) media.add(m); else unknown++;
+            if (m != null) found.add(m); else unknown++;
         }
         if (unknown > 0 && !askedPermission && !canReadMedia() && Build.VERSION.SDK_INT >= 23) {
             askedPermission = true;
-            String[] perms = Build.VERSION.SDK_INT >= 33
-                    ? new String[]{Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO}
-                    : new String[]{Manifest.permission.READ_EXTERNAL_STORAGE};
-            requestPermissions(perms, REQ_PERM);
+            requestPermissions(mediaPerms(), REQ_PERM);
             return;
         }
-        if (media.isEmpty()) {
+        if (found.isEmpty()) {
             toast("Les originaux n'ont pas été trouvés : supprimez-les vous-même de la galerie");
             openVault();
             return;
@@ -222,7 +273,7 @@ public class ImportActivity extends Activity {
         if (unknown > 0) toast(unknown + " original(aux) introuvable(s) : à supprimer vous-même");
         if (Build.VERSION.SDK_INT >= 30) {
             try {
-                PendingIntent pi = MediaStore.createDeleteRequest(getContentResolver(), media);
+                PendingIntent pi = MediaStore.createDeleteRequest(getContentResolver(), found);
                 startIntentSenderForResult(pi.getIntentSender(), REQ_DELETE, null, 0, 0, 0);
                 return;
             } catch (Exception e) {
@@ -233,7 +284,7 @@ public class ImportActivity extends Activity {
         }
         // Android 10 et plus ancien
         int ok = 0;
-        for (Uri m : media) {
+        for (Uri m : found) {
             try {
                 ok += getContentResolver().delete(m, null, null);
             } catch (Exception e) {
@@ -252,7 +303,9 @@ public class ImportActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
         super.onRequestPermissionsResult(code, perms, res);
-        if (code == REQ_PERM) askDelete();
+        if (code != REQ_PERM) return;
+        if (pickAfterPermission) { pickAfterPermission = false; pickFromGallery(); }
+        else askDelete();
     }
 
     @Override
