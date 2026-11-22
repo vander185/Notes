@@ -1288,7 +1288,7 @@ async function sbRestore() {
    de vos fichiers Drive). Tout part déjà chiffré. La clé du coffre y est protégée par un
    « mot de passe de sauvegarde Drive » (jamais par le code à chiffres).
    ========================================================= */
-const GCLIENT_DEFAULT = '';   // identifiant OAuth Google (public, ce n'est pas un secret)
+const GCLIENT_DEFAULT = '11261545131-pecqmde6k1e01nbdrdrsgnu3our8qf4e.apps.googleusercontent.com';   // identifiant OAuth Google (public, ce n'est pas un secret)
 const GSCOPE = 'https://www.googleapis.com/auth/drive.appdata', GAPI = 'https://www.googleapis.com';
 let GD = null, gTok = null, gExp = 0, gSyncing = false, gAgain = false, gErr = '', gMsg = '';
 const gClient = () => (CFG.gcid || GCLIENT_DEFAULT).trim();
