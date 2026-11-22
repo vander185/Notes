@@ -348,6 +348,7 @@ async function checkIntruders() {
 }
 
 /* ---------- Boîte d'arrivée (fichiers envoyés par l'appli Android pendant que le coffre est fermé) ---------- */
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
 const IS_APK = (() => { try { if (/^android-app:\/\/io\.github\.vander185\.notes/.test(document.referrer)) localStorage.setItem('apk', '1'); return localStorage.getItem('apk') === '1'; } catch (e) { return false; } })();
 async function inboxKeys() {
   if (DECOY || (await mget('inboxPub'))) return;
@@ -383,6 +384,19 @@ async function inboxFile() {
   if (n) { ITEMS.sort((a, b) => b.added - a.added); render(); toast(`${n} fichier${n > 1 ? 's' : ''} ajouté${n > 1 ? 's' : ''} depuis la galerie 🔐`, 3500); }
   try { if (/[?&]shared=/.test(location.search)) history.replaceState(null, '', location.pathname); } catch (e) {}
 }
+
+/* « Importer et effacer de la galerie » : ouvre l'appli Android Notes (v2), qui seule a le droit d'effacer */
+function galDel() {
+  pickerOpen = true; setTimeout(() => pickerOpen = false, 120000);
+  const back = location.href.split('#')[0] + '#noapk';
+  location.href = 'intent://import#Intent;scheme=notesimport;package=io.github.vander185.notes;S.browser_fallback_url=' + encodeURIComponent(back) + ';end';
+}
+addEventListener('hashchange', () => {
+  if (location.hash !== '#noapk') return;
+  history.replaceState(null, '', location.href.split('#')[0]);
+  pickerOpen = false;
+  ask({ title: 'Appli Android nécessaire', text: "Pour effacer les photos de la galerie, il faut l'appli <b>Notes pour Android (v2)</b> (fichier Notes.apk). Installez-la, puis ouvrez le coffre <b>depuis son icône</b>.<br><br>Sinon : importez normalement, puis supprimez les originaux vous-même dans la Galerie.", ok: 'OK', cancel: '' });
+});
 
 /* ---------- Ouverture du coffre ---------- */
 let ALBUMS = [], ALBUM = null, SEL = null;
@@ -596,13 +610,13 @@ let addSrc = 'gal';
 $('#badd').onclick = () => sheet('Ajouter au coffre', [
   { v: 'cam', ico: '📷', cls: 'b', label: 'Prendre une photo', sub: 'Va directement dans le coffre, pas dans la Galerie' },
   { v: 'vid', ico: '🎥', cls: 'r', label: 'Filmer une vidéo', sub: 'Va directement dans le coffre' },
-  ...(IS_APK ? [{ v: 'gdel', ico: '🧹', cls: 'r', label: 'Importer et effacer de la galerie', sub: 'Les originaux sont supprimés du téléphone' }] : []),
+  ...(IS_ANDROID ? [{ v: 'gdel', ico: '🧹', cls: 'r', label: 'Importer et effacer de la galerie', sub: IS_APK ? 'Les originaux sont supprimés du téléphone' : 'Avec l’appli Android Notes (v2)' }] : []),
   { v: 'gal', ico: '🖼', cls: 'o', label: 'Importer photos et vidéos' },
   { v: 'doc', ico: '📄', cls: 'g', label: 'Importer des documents', sub: 'PDF, Word, fichiers…' },
   { v: 'note', ico: '📝', cls: 'y', label: 'Écrire une note secrète', sub: 'Codes, adresses, infos privées' }
 ], v => {
   if (v === 'note') return setTimeout(newSecretNote, 50);
-  if (v === 'gdel') { pickerOpen = true; setTimeout(() => pickerOpen = false, 120000); location.href = 'intent://import#Intent;scheme=notesimport;package=io.github.vander185.notes;end'; return; }
+  if (v === 'gdel') return galDel();
   const f = $('#fin'); f.value = ''; f.removeAttribute('capture'); addSrc = v;
   if (v === 'cam') { f.accept = 'image/*'; f.setAttribute('capture', 'environment'); f.multiple = false; }
   else if (v === 'vid') { f.accept = 'video/*'; f.setAttribute('capture', 'environment'); f.multiple = false; }
@@ -1226,6 +1240,7 @@ $('#c_on').onclick = async () => {
   toast('Sauvegarde en ligne activée ☁️'); sync();
 };
 $('#c_now').onclick = () => sync();
+$('#r_galdel').onclick = () => { if (DECOY) return toast('Indisponible pour le moment', 2500); galDel(); };
 async function askUpgrade() {
   const pw = await ask({ title: 'Renforcer la sauvegarde', text: `Tapez le mot de passe de votre compte de sauvegarde (<b>${esc(CS.email)}</b>). Il protégera désormais la clé de votre coffre en ligne, à la place du code à chiffres.`, input: '', ph: 'Mot de passe', ok: 'Renforcer', pw: 'txt' });
   if (pw === null) return;
