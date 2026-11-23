@@ -15,6 +15,7 @@ android {
         release { minifyEnabled false }   // signature faite à part, avec la clé de l'appli
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    packaging { jniLibs { useLegacyPackaging true } }   // bibliothèques compressées : pas besoin d'alignement spécial
     lint { checkReleaseBuilds false; abortOnError false }
 }
 
