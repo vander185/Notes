@@ -47,6 +47,7 @@ public class ImportActivity extends Activity {
     private final ArrayList<Uri> sources = new ArrayList<>();
     private final ArrayList<Uri> copies = new ArrayList<>();
     private boolean askedPermission = false, pickAfterPermission = false;
+    private final ArrayList<String> notes = new ArrayList<>();   // notes lues ici, envoyées au bloc-notes par lien direct
     private final ArrayList<Uri> media = new ArrayList<>();   // sources qui sont des photos/vidéos (les seules à effacer)
 
     @Override
@@ -63,8 +64,8 @@ public class ImportActivity extends Activity {
                 CharSequence t = in.getCharSequenceExtra(Intent.EXTRA_TEXT);
                 String subj = in.getStringExtra(Intent.EXTRA_SUBJECT);
                 if (t != null && t.length() > 0) {
-                    Uri f = writeText((subj != null && !subj.isEmpty() && !t.toString().startsWith(subj) ? subj + "\n" : "") + t);
-                    if (f != null) { copies.add(f); openVault(); return; }
+                    notes.add((subj != null && !subj.isEmpty() && !t.toString().startsWith(subj) ? subj + "\n" : "") + t);
+                    openNotes(); return;
                 }
             }
         } else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
@@ -126,10 +127,20 @@ public class ImportActivity extends Activity {
         else toast(sources.size() > 1 ? "Envoi de " + sources.size() + " notes vers le bloc-notes…" : "Envoi de la note vers le bloc-notes…");
         new Thread(() -> {
             for (Uri u : sources) {
+                if (!isMedia(u)) {   // note (Samsung Notes, texte, Word) : lue directement ici
+                    String txt = null;
+                    try { txt = NoteReader.read(readAll(u), displayName(u), getContentResolver().getType(u)); } catch (Throwable ignored) { }
+                    if (txt != null) { notes.add(txt); continue; }
+                }
                 Uri c = copy(u);
                 if (c != null) { copies.add(c); if (isMedia(u)) media.add(u); }
             }
             runOnUiThread(() -> {
+                if (copies.isEmpty() && !notes.isEmpty()) { openNotes(); return; }
+                if (!notes.isEmpty()) {   // mélange notes + photos : les notes suivent le chemin des fichiers
+                    for (String n : notes) { Uri f = writeText(n); if (f != null) copies.add(f); }
+                    notes.clear();
+                }
                 if (copies.isEmpty()) { toast("Aucun fichier n'a pu être lu"); finish(); return; }
                 if (copies.size() < sources.size()) toast((sources.size() - copies.size()) + " fichier(s) illisible(s) : ils restent sur le téléphone");
                 if (media.isEmpty()) { openVault(); return; }   // notes ou documents : rien à effacer
@@ -344,6 +355,41 @@ public class ImportActivity extends Activity {
         t.setClipData(cd);
         t.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(t);
+        finish();
+    }
+
+    private byte[] readAll(Uri u) throws Exception {
+        try (InputStream is = getContentResolver().openInputStream(u)) {
+            if (is == null) return null;
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[1 << 16];
+            int n;
+            long total = 0;
+            while ((n = is.read(buf)) > 0) { bo.write(buf, 0, n); total += n; if (total > 64L << 20) return null; }
+            return bo.toByteArray();
+        }
+    }
+
+    /* Ouvre l'appli sur un lien qui contient les notes (#addnote=…) : pas besoin du partage de Chrome */
+    private void openNotes() {
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            long now = System.currentTimeMillis();
+            for (String n : notes) arr.put(new org.json.JSONObject().put("txt", n).put("upd", now));
+            String json = new org.json.JSONObject().put("id", Long.toString(now, 36) + Long.toString(System.nanoTime() & 0xffffff, 36)).put("notes", arr).toString();
+            String b64 = android.util.Base64.encodeToString(json.getBytes("UTF-8"), android.util.Base64.URL_SAFE | android.util.Base64.NO_WRAP | android.util.Base64.NO_PADDING);
+            if (b64.length() > 400000) {   // note énorme : on passe par le chemin des fichiers
+                for (String n : notes) { Uri f = writeText(n); if (f != null) copies.add(f); }
+                notes.clear();
+                if (!copies.isEmpty()) openVault(); else finish();
+                return;
+            }
+            Intent t = new Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.launch_url) + "#addnote=" + b64), this, LauncherActivity.class);
+            t.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(t);
+        } catch (Exception e) {
+            toast("La note n'a pas pu être envoyée");
+        }
         finish();
     }
 

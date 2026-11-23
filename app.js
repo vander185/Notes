@@ -389,6 +389,24 @@ $('#nmore').onclick = () => sheet('Notes', [
 ], v => { if (v === 'imp') { pickerOpen = true; setTimeout(() => pickerOpen = false, 90000); $('#nin').click(); } });
 $('#nin').onchange = e => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) notesImport(fs); };
 // notes reçues pendant que l'appli était fermée (partage depuis Samsung Notes) : déjà rangées par le service worker
+/* notes envoyées par l'appli Android (lues sur le téléphone) : #addnote=<base64url du JSON> */
+async function addNoteHash() {
+  const h = location.hash; if (!h.startsWith('#addnote=')) return;
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  try {
+    const b = atob(h.slice(9).replace(/-/g, '+').replace(/_/g, '/')), u = Uint8Array.from(b, c => c.charCodeAt(0));
+    const P = JSON.parse(new TextDecoder().decode(u));
+    let seen = []; try { seen = JSON.parse(localStorage.getItem('addnote') || '[]'); } catch (e) {}
+    if (!P || !Array.isArray(P.notes) || seen.includes(P.id)) return;
+    await notesLoad();
+    P.notes.forEach(o => { if (o && typeof o.txt === 'string' && o.txt.trim()) NOTES.push({ id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), txt: o.txt.slice(0, 2e6), upd: +o.upd || Date.now() }); });
+    await nSave(); try { localStorage.setItem('addnote', JSON.stringify(seen.concat(P.id).slice(-30))); } catch (e) {}
+    notesDraw();
+    const n = P.notes.length; toast(`${n} note${n > 1 ? 's' : ''} importée${n > 1 ? 's' : ''} dans le bloc-notes`, 4000);
+  } catch (e) { console.warn('addnote', e); toast('La note n’a pas pu être ajoutée', 4000); }
+}
+addEventListener('hashchange', addNoteHash);
+setTimeout(addNoteHash, 300);
 (() => {
   const q = location.search, m = /[?&]notes=(\d+)/.exec(q), b = /[?&]bad=(\d+)/.exec(q), s = /[?&]shared=(\w+)/.exec(q);
   let msg = '';
