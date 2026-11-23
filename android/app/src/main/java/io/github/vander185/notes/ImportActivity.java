@@ -58,6 +58,7 @@ public class ImportActivity extends Activity {
         String action = in != null ? in.getAction() : null;
         if (Intent.ACTION_SEND.equals(action)) {
             Uri u = in.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (u == null && in.getClipData() != null && in.getClipData().getItemCount() > 0) u = in.getClipData().getItemAt(0).getUri();
             if (u != null) sources.add(u);
             else {
                 // texte partagé (ex. Samsung Notes) : on en fait un petit fichier texte pour le bloc-notes
@@ -65,12 +66,17 @@ public class ImportActivity extends Activity {
                 String subj = in.getStringExtra(Intent.EXTRA_SUBJECT);
                 if (t != null && t.length() > 0) {
                     notes.add((subj != null && !subj.isEmpty() && !t.toString().startsWith(subj) ? subj + "\n" : "") + t); noteNames.add("");
-                    openNotes(); return;
+                    queueNotes(); sendChunk(); return;
                 }
             }
         } else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
             ArrayList<Uri> l = in.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
             if (l != null) sources.addAll(l);
+            if (sources.isEmpty() && in.getClipData() != null)
+                for (int i = 0; i < in.getClipData().getItemCount(); i++) { Uri x = in.getClipData().getItemAt(i).getUri(); if (x != null) sources.add(x); }
+        } else if (in != null && in.getData() != null && "next".equals(in.getData().getHost())) {
+            sendChunk();   // l'appli demande la suite d'un gros import
+            return;
         } else {
             // bouton « Importer et effacer de la galerie » : d'abord l'accès aux photos (pour retrouver les originaux), puis la Galerie
             if (!canReadMedia() && Build.VERSION.SDK_INT >= 23) {
@@ -130,13 +136,19 @@ public class ImportActivity extends Activity {
                 if (!isMedia(u)) {   // note (Samsung Notes, texte, Word) : lue directement ici
                     String txt = null;
                     try { txt = NoteReader.read(readAll(u), displayName(u), getContentResolver().getType(u)); } catch (Throwable ignored) { }
-                    if (txt != null) { notes.add(txt); String dn = displayName(u); noteNames.add(dn != null ? dn : ""); continue; }
+                    String dn = displayName(u);
+                    if (txt != null) { notes.add(txt); noteNames.add(dn != null ? dn : ""); continue; }
+                    if (dn != null && dn.toLowerCase().endsWith(".sdocx")) {   // note manuscrite / dessin : on garde une trace
+                        notes.add("(Cette note Samsung ne contient pas de texte lisible : écriture à la main ou dessin. Dans Samsung Notes, utilisez « Convertir en texte » puis partagez-la à nouveau.)");
+                        noteNames.add("!" + dn);
+                        continue;
+                    }
                 }
                 Uri c = copy(u);
                 if (c != null) { copies.add(c); if (isMedia(u)) media.add(u); }
             }
             runOnUiThread(() -> {
-                if (copies.isEmpty() && !notes.isEmpty()) { openNotes(); return; }
+                if (!notes.isEmpty() && media.isEmpty()) { queueNotes(); copies.clear(); sendChunk(); return; }   // notes : par lien direct (les autres fichiers restent sur le téléphone)
                 if (!notes.isEmpty()) {   // mélange notes + photos : les notes suivent le chemin des fichiers
                     for (String n : notes) { Uri f = writeText(n); if (f != null) copies.add(f); }
                     notes.clear();
@@ -370,30 +382,78 @@ public class ImportActivity extends Activity {
         }
     }
 
-    /* Ouvre l'appli sur un lien qui contient les notes (#addnote=…) : pas besoin du partage de Chrome */
-    private void openNotes() {
+    /* Les notes à envoyer sont rangées dans un fichier, puis envoyées par paquets compressés
+       sur un lien (#addnote=z…) : pas besoin du partage de Chrome, et ça marche pour 100 notes d'un coup. */
+    private File pendingFile() { return new File(getFilesDir(), "notes_a_envoyer.json"); }
+
+    private void queueNotes() {
         try {
             org.json.JSONArray arr = new org.json.JSONArray();
+            File f = pendingFile();
+            if (f.exists()) try { arr = new org.json.JSONArray(readText(f)); } catch (Exception ignored) { }
             long now = System.currentTimeMillis();
             for (int i = 0; i < notes.size(); i++) {
                 String nm = i < noteNames.size() ? noteNames.get(i) : "";
-                org.json.JSONObject o = new org.json.JSONObject().put("txt", notes.get(i)).put("upd", now).put("name", nm);
+                boolean unread = nm.startsWith("!");
+                if (unread) nm = nm.substring(1);
+                String txt = notes.get(i);
+                if (txt.length() > 300000) txt = txt.substring(0, 300000);
+                org.json.JSONObject o = new org.json.JSONObject().put("txt", txt).put("upd", now).put("name", nm);
                 if (nm.toLowerCase().endsWith(".sdocx")) o.put("src", "Samsung Notes");
+                if (unread) o.put("title", nm.replaceAll("\\.[^.]+$", "")).put("unread", true);
                 arr.put(o);
             }
-            String json = new org.json.JSONObject().put("id", Long.toString(now, 36) + Long.toString(System.nanoTime() & 0xffffff, 36)).put("notes", arr).toString();
-            String b64 = android.util.Base64.encodeToString(json.getBytes("UTF-8"), android.util.Base64.URL_SAFE | android.util.Base64.NO_WRAP | android.util.Base64.NO_PADDING);
-            if (b64.length() > 400000) {   // note énorme : on passe par le chemin des fichiers
-                for (String n : notes) { Uri f = writeText(n); if (f != null) copies.add(f); }
-                notes.clear();
-                if (!copies.isEmpty()) openVault(); else finish();
-                return;
+            try (OutputStream os = new FileOutputStream(f)) { os.write(arr.toString().getBytes("UTF-8")); }
+        } catch (Exception e) { toast("Les notes n'ont pas pu être préparées"); }
+        notes.clear(); noteNames.clear();
+    }
+
+    private static String readText(File f) throws Exception {
+        try (InputStream is = new java.io.FileInputStream(f)) {
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[1 << 16]; int n;
+            while ((n = is.read(buf)) > 0) bo.write(buf, 0, n);
+            return new String(bo.toByteArray(), "UTF-8");
+        }
+    }
+
+    private static String pack(String json) throws Exception {
+        java.util.zip.Deflater d = new java.util.zip.Deflater(9, true);
+        d.setInput(json.getBytes("UTF-8")); d.finish();
+        java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[1 << 16];
+        while (!d.finished()) { int n = d.deflate(buf); bo.write(buf, 0, n); }
+        d.end();
+        return android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.URL_SAFE | android.util.Base64.NO_WRAP | android.util.Base64.NO_PADDING);
+    }
+
+    private void sendChunk() {
+        try {
+            File f = pendingFile();
+            if (!f.exists()) { finish(); return; }
+            org.json.JSONArray all = new org.json.JSONArray(readText(f));
+            if (all.length() == 0) { f.delete(); finish(); return; }
+            int n = all.length();
+            String b64;
+            while (true) {   // paquet le plus grand possible sous ~150 Ko
+                org.json.JSONArray part = new org.json.JSONArray();
+                for (int i = 0; i < n; i++) part.put(all.get(i));
+                String json = new org.json.JSONObject()
+                        .put("id", Long.toString(System.currentTimeMillis(), 36) + Long.toString(System.nanoTime() & 0xffffff, 36))
+                        .put("notes", part).put("more", all.length() - n).put("total", all.length()).toString();
+                b64 = pack(json);
+                if (b64.length() <= 150000 || n == 1) break;
+                n = Math.max(1, n * 150000 / b64.length() * 9 / 10);
             }
-            Intent t = new Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.launch_url) + "#addnote=" + b64), this, LauncherActivity.class);
+            org.json.JSONArray rest = new org.json.JSONArray();
+            for (int i = n; i < all.length(); i++) rest.put(all.get(i));
+            if (rest.length() == 0) f.delete();
+            else try (OutputStream os = new FileOutputStream(f)) { os.write(rest.toString().getBytes("UTF-8")); }
+            Intent t = new Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.launch_url) + "#addnote=z" + b64), this, LauncherActivity.class);
             t.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(t);
         } catch (Exception e) {
-            toast("La note n'a pas pu être envoyée");
+            toast("Les notes n'ont pas pu être envoyées");
         }
         finish();
     }

@@ -479,7 +479,9 @@ async function addNoteHash() {
   const h = location.hash; if (!h.startsWith('#addnote=')) return;
   try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
   try {
-    const b = atob(h.slice(9).replace(/-/g, '+').replace(/_/g, '/')), u = Uint8Array.from(b, c => c.charCodeAt(0));
+    const z = h[9] === 'z', s = h.slice(z ? 10 : 9);
+    const b = atob(s.replace(/-/g, '+').replace(/_/g, '/')); let u = Uint8Array.from(b, c => c.charCodeAt(0));
+    if (z) u = new Uint8Array(await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());   // paquet compressé
     const P = JSON.parse(new TextDecoder().decode(u));
     let seen = []; try { seen = JSON.parse(localStorage.getItem('addnote') || '[]'); } catch (e) {}
     if (!P || !Array.isArray(P.notes) || seen.includes(P.id)) return;
@@ -487,7 +489,16 @@ async function addNoteHash() {
     const added = P.notes.filter(o => o && typeof o.txt === 'string').map(noteAdd).filter(Boolean);
     await nSave(); try { localStorage.setItem('addnote', JSON.stringify(seen.concat(P.id).slice(-30))); } catch (e) {}
     notesDraw(); if (added[0]) noteFlash(added[0].id);
-    const n = added.length; toast(n ? `${n} note${n > 1 ? 's' : ''} importée${n > 1 ? 's' : ''} dans le bloc-notes` : 'Cette note est déjà dans le bloc-notes', 4000);
+    const n = added.length, more = +P.more || 0;
+    window._impN = (window._impN || 0) + n;
+    if (more > 0) {   // gros import : l'appli Android envoie la suite quand on la lui demande
+      const v = await sheet(`${window._impN} note${window._impN > 1 ? 's' : ''} importée${window._impN > 1 ? 's' : ''} · ${more} restante${more > 1 ? 's' : ''}`, [{ v: 'go', ico: '📥', cls: 'y', label: 'Importer la suite', sub: `${more} note${more > 1 ? 's' : ''}` }]);
+      if (v === 'go') location.href = 'intent://next#Intent;scheme=notesimport;package=io.github.vander185.notes;end';
+      return;
+    }
+    const tot = window._impN; window._impN = 0;
+    const unread = P.notes.filter(o => o && o.unread).length;
+    toast(tot ? `${tot} note${tot > 1 ? 's' : ''} importée${tot > 1 ? 's' : ''} dans le bloc-notes` + (unread ? ` (${unread} sans texte lisible)` : '') : 'Ces notes sont déjà dans le bloc-notes', 5000);
   } catch (e) { console.warn('addnote', e); toast('La note n’a pas pu être ajoutée', 4000); }
 }
 addEventListener('hashchange', addNoteHash);
