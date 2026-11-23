@@ -21,7 +21,9 @@ import android.os.Vibrator;
 import android.provider.Settings;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 import org.vosk.Model;
+import org.vosk.SpeakerModel;
 import org.vosk.Recognizer;
 import org.vosk.android.RecognitionListener;
 import org.vosk.android.SpeechService;
@@ -37,9 +39,16 @@ import android.app.KeyguardManager;
 public class WakeService extends Service implements RecognitionListener {
     static final String STOP = "stop", CH = "wake", CH_ALERT = "wake_alert";
     static volatile boolean running = false;
+    static volatile WakeService instance;
+    static final int ENROLL_N = 6;
 
     private final Handler h = new Handler(Looper.getMainLooper());
     private Model model;
+    private SpeakerModel spk;
+    /* empreinte vocale : moyenne des vecteurs de voix d'Ahmed quand il dit « Claire » */
+    private volatile boolean enrolling = false;
+    private final java.util.ArrayList<double[]> samples = new java.util.ArrayList<>();
+    private boolean pendingClaire = false;
     private SpeechService speech;
     private long pausedUntil = 0;
 
@@ -59,9 +68,16 @@ public class WakeService extends Service implements RecognitionListener {
         if (Build.VERSION.SDK_INT >= 29) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
         else startForeground(1, n);
         running = true;
+        instance = this;
         if (model == null) {
             StorageService.unpack(this, "model-fr", "model",
-                    m -> { model = m; listen(); },
+                    m -> {
+                        model = m;
+                        new Thread(() -> {   // modèle de reconnaissance de la voix (empreinte vocale)
+                            try { java.io.File d = copyAssets("model-spk"); spk = new SpeakerModel(d.getAbsolutePath()); } catch (Throwable ignored) { spk = null; }
+                            h.post(this::listen);
+                        }).start();
+                    },
                     e -> { update("Le réveil vocal n'a pas pu démarrer"); stopSelf(); });
         } else if (speech == null) listen();
         return START_STICKY;
@@ -71,6 +87,7 @@ public class WakeService extends Service implements RecognitionListener {
         if (model == null || speech != null) return;
         try {
             Recognizer rec = new Recognizer(model, 16000.0f, "[\"claire\", \"[unk]\"]");
+            if (spk != null) rec.setSpeakerModel(spk);
             speech = new SpeechService(rec, 16000.0f);
             speech.startListening(this);
         } catch (Exception e) {
@@ -96,10 +113,31 @@ public class WakeService extends Service implements RecognitionListener {
         listen();
     }
 
-    private void heard(String json) {
-        String t = "";
-        try { JSONObject o = new JSONObject(json); t = o.optString("text", o.optString("partial", "")); } catch (Exception ignored) { }
-        if (!t.contains("claire") || System.currentTimeMillis() < pausedUntil) return;
+    private void heard(String json, boolean fin) {
+        String t = ""; double[] vec = null;
+        try {
+            JSONObject o = new JSONObject(json);
+            t = o.optString("text", o.optString("partial", ""));
+            JSONArray a = o.optJSONArray("spk");
+            if (a != null && a.length() > 0) { vec = new double[a.length()]; for (int k = 0; k < vec.length; k++) vec[k] = a.getDouble(k); }
+        } catch (Exception ignored) { }
+        boolean claire = t.contains("claire");
+        if (System.currentTimeMillis() < pausedUntil) return;
+        if (enrolling) {   // enregistrement de la voix : on collecte, on ne déclenche rien
+            if (fin && claire && vec != null) addSample(vec);
+            return;
+        }
+        double[] print = voicePrint();
+        if (print == null || spk == null) { if (claire) trigger(); return; }   // pas d'empreinte : tout le monde peut réveiller Claire
+        if (!fin) { if (claire) pendingClaire = true; return; }               // on attend la fin du mot pour comparer la voix
+        boolean was = pendingClaire || claire; pendingClaire = false;
+        if (!was || vec == null) return;
+        double sim = cos(norm(vec), print);
+        if (sim >= threshold()) trigger();
+        else { pausedUntil = System.currentTimeMillis() + 1500; }   // une autre voix : ignorée
+    }
+
+    private void trigger() {
         pausedUntil = System.currentTimeMillis() + 8000;
         pauseListening();
         try {
@@ -114,6 +152,68 @@ public class WakeService extends Service implements RecognitionListener {
         openClaire();
         update("Claire vous écoute…");
         h.postDelayed(() -> resumeWhenFree(0), 8000);
+    }
+
+    /** copie un dossier des ressources de l'appli vers le stockage interne (une seule fois par version) */
+    private java.io.File copyAssets(String name) throws java.io.IOException {
+        java.io.File dest = new java.io.File(getFilesDir(), name);
+        String uuid = read(getAssets().open(name + "/uuid"));
+        java.io.File u = new java.io.File(dest, "uuid");
+        if (u.exists() && uuid.equals(read(new java.io.FileInputStream(u)))) return dest;
+        copyDir(name, dest);
+        return dest;
+    }
+    private void copyDir(String asset, java.io.File dest) throws java.io.IOException {
+        String[] list = getAssets().list(asset);
+        if (list == null || list.length == 0) {
+            dest.getParentFile().mkdirs();
+            try (java.io.InputStream in = getAssets().open(asset); java.io.OutputStream out = new java.io.FileOutputStream(dest)) {
+                byte[] b = new byte[65536]; int n; while ((n = in.read(b)) > 0) out.write(b, 0, n);
+            }
+            return;
+        }
+        dest.mkdirs();
+        for (String f : list) copyDir(asset + "/" + f, new java.io.File(dest, f));
+    }
+    private static String read(java.io.InputStream in) throws java.io.IOException {
+        try (in) { java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); byte[] b = new byte[4096]; int n; while ((n = in.read(b)) > 0) bo.write(b, 0, n); return bo.toString("UTF-8").trim(); }
+    }
+
+    /* ---------- empreinte vocale ---------- */
+    static double[] norm(double[] v) { double s = 0; for (double x : v) s += x * x; s = Math.sqrt(s); if (s == 0) return v; double[] r = new double[v.length]; for (int i = 0; i < v.length; i++) r[i] = v[i] / s; return r; }
+    static double cos(double[] a, double[] b) { if (a.length != b.length) return -1; double s = 0; for (int i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+
+    double[] voicePrint() {
+        String s = prefs(this).getString("voice", null); if (s == null) return null;
+        try { JSONArray a = new JSONArray(s); double[] v = new double[a.length()]; for (int i = 0; i < v.length; i++) v[i] = a.getDouble(i); return v; } catch (Exception e) { return null; }
+    }
+    double threshold() {
+        float base = prefs(this).getFloat("vmin", 0.5f);   // ressemblance la plus faible mesurée pendant l'enregistrement
+        boolean strict = prefs(this).getBoolean("strict", true);
+        return base - (strict ? 0.05 : 0.15);
+    }
+    void startEnroll() {
+        samples.clear(); enrolling = true; pausedUntil = 0;
+        prefs(this).edit().putInt("enroll", 0).apply();
+        update("Enregistrement de votre voix : dites « Claire » (0/" + ENROLL_N + ")");
+        if (speech == null) listen();
+    }
+    void cancelEnroll() { enrolling = false; samples.clear(); prefs(this).edit().putInt("enroll", -1).apply(); update("Dites « Claire » pour lui parler"); }
+    private void addSample(double[] v) {
+        samples.add(norm(v));
+        prefs(this).edit().putInt("enroll", samples.size()).apply();
+        try { Vibrator vb = (Vibrator) getSystemService(VIBRATOR_SERVICE); if (Build.VERSION.SDK_INT >= 26) vb.vibrate(VibrationEffect.createOneShot(40, 150)); else vb.vibrate(40); } catch (Exception ignored) { }
+        pausedUntil = System.currentTimeMillis() + 700;
+        update("Enregistrement de votre voix : dites « Claire » (" + samples.size() + "/" + ENROLL_N + ")");
+        if (samples.size() < ENROLL_N) return;
+        double[] m = new double[samples.get(0).length];
+        for (double[] s : samples) for (int i = 0; i < m.length; i++) m[i] += s[i] / samples.size();
+        m = norm(m);
+        double min = 1; for (double[] s : samples) min = Math.min(min, cos(s, m));
+        JSONArray a = new JSONArray(); for (double x : m) { try { a.put(x); } catch (Exception ignored) { } }
+        prefs(this).edit().putString("voice", a.toString()).putFloat("vmin", (float) Math.max(0.2, min)).putInt("enroll", ENROLL_N + 1).apply();
+        enrolling = false;
+        update("Votre voix est enregistrée : Claire ne répond qu'à vous");
     }
 
     private Intent talkIntent() {
@@ -160,15 +260,15 @@ public class WakeService extends Service implements RecognitionListener {
         try { ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(1, notif(text)); } catch (Exception ignored) { }
     }
 
-    @Override public void onPartialResult(String hypothesis) { heard(hypothesis); }
-    @Override public void onResult(String hypothesis) { heard(hypothesis); }
-    @Override public void onFinalResult(String hypothesis) { heard(hypothesis); }
+    @Override public void onPartialResult(String hypothesis) { heard(hypothesis, false); }
+    @Override public void onResult(String hypothesis) { heard(hypothesis, true); }
+    @Override public void onFinalResult(String hypothesis) { heard(hypothesis, true); }
     @Override public void onError(Exception e) { pauseListening(); h.postDelayed(this::listen, 3000); }
     @Override public void onTimeout() { pauseListening(); listen(); }
 
     @Override
     public void onDestroy() {
-        running = false;
+        running = false; instance = null; enrolling = false;
         h.removeCallbacksAndMessages(null);
         pauseListening();
         if (model != null) { try { model.close(); } catch (Exception ignored) { } model = null; }

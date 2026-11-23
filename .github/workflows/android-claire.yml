@@ -25,6 +25,14 @@ jobs:
           rm -rf "$A"/rescore "$A"/rnnlm
           echo "fr-small-0.22-${GITHUB_SHA::7}" > "$A"/uuid
           du -sh "$A"
+      - name: modèle d'empreinte vocale (Vosk spk 0.4)
+        run: |
+          curl -sSL -o /tmp/s.zip https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip
+          unzip -q /tmp/s.zip -d /tmp/s
+          A=android-claire/app/src/main/assets/model-spk
+          mkdir -p "$A" && cp -r /tmp/s/vosk-model-spk-0.4/* "$A"/
+          echo "spk-0.4-${GITHUB_SHA::7}" > "$A"/uuid
+          du -sh "$A"
       - run: gradle -p android-claire assembleRelease --no-daemon --stacktrace
       - name: publier sur la branche apk-claire
         run: |
