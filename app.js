@@ -259,19 +259,28 @@ async function notesLoad() {
 }
 const nSave = () => mset('notes', NOTES);
 const nDate = t => { const d = new Date(t), now = new Date(); return d.toDateString() === now.toDateString() ? d.toLocaleTimeString('fr-BE', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('fr-BE', { day: '2-digit', month: '2-digit', year: '2-digit' }); };
+let nView = 'list', nSort = 'upd';
+try { nView = localStorage.getItem('nview') || 'list'; nSort = localStorage.getItem('nsort') || 'upd'; } catch (e) {}
 function notesDraw() {
   const q = $('#nsearch').value.trim().toLowerCase();
-  const L = NOTES.filter(n => !q || nFull(n).toLowerCase().includes(q)).sort((a, b) => (b.pin ? 1 : 0) - (a.pin ? 1 : 0) || b.upd - a.upd);
+  const key = n => nSort === 'cre' ? (n.cre || n.upd) : n.upd;
+  const ttl = n => ((n.title || '').trim() || (n.txt || '').split('\n').find(x => x.trim()) || '').trim();
+  const L = NOTES.filter(n => !q || nFull(n).toLowerCase().includes(q))
+    .sort((a, b) => (b.pin ? 1 : 0) - (a.pin ? 1 : 0) || (nSort === 'az' ? ttl(a).localeCompare(ttl(b), 'fr', { sensitivity: 'base' }) : key(b) - key(a)));
   const day = new Date(); day.setHours(0, 0, 0, 0); const d0 = day.getTime(), D = 86400000;
-  const grp = n => n.pin ? '📌' : n.upd >= d0 ? "Aujourd'hui" : n.upd >= d0 - D ? 'Hier' : n.upd >= d0 - 7 * D ? '7 jours précédents' : n.upd >= d0 - 30 * D ? '30 jours précédents' : String(new Date(n.upd).getFullYear());
+  const grp = n => n.pin ? '📌' : nSort === 'az' ? 'Toutes les notes' : key(n) >= d0 ? "Aujourd'hui" : key(n) >= d0 - D ? 'Hier' : key(n) >= d0 - 7 * D ? '7 jours précédents' : key(n) >= d0 - 30 * D ? '30 jours précédents' : String(new Date(key(n)).getFullYear());
   let html = '', cur = null;
   L.forEach(n => {
     const g = grp(n); if (g !== cur) { html += (cur ? '</div>' : '') + `<h5>${g === '📌' ? '<svg class="i pi"><use href="#i-pin"/></svg>Épinglées' : g}</h5><div class="ng">`; cur = g; }
     const lines = (n.txt || '').split('\n').filter(x => x.trim());
-    const t = (n.title || '').trim() || lines[0] || '', sub = (n.title || '').trim() ? lines[0] : lines[1];
-    html += `<button class="ni" data-id="${n.id}"><b${t ? '' : ' class="nt"'}><span>${esc(t || 'Sans titre')}</span>${n.src ? `<i>${n.src === 'Samsung Notes' ? 'Samsung' : 'Importée'}</i>` : ''}</b><small><em>${nDate(n.upd)}</em>${esc(sub || 'Aucun texte supplémentaire')}</small></button>`;
+    const hasT = !!(n.title || '').trim(), t = hasT ? n.title.trim() : lines[0] || '', body = hasT ? lines : lines.slice(1), sub = body[0];
+    const tag = n.src ? `<i>${n.src === 'Samsung Notes' ? 'Samsung' : 'Importée'}</i>` : '';
+    html += `<button class="ni" data-id="${n.id}"><b${t ? '' : ' class="nt"'}><span>${esc(t || 'Sans titre')}</span>${tag}</b>` +
+      `<p>${esc(body.slice(0, 8).join('\n').slice(0, 400))}</p>` +
+      `<small><em>${nDate(key(n))}</em>${esc(sub || 'Aucun texte supplémentaire')}</small><em class="cd">${nDate(key(n))}</em></button>`;
   });
-  $('#nlist').innerHTML = L.length ? html + '</div>' : `<p style="text-align:center;color:#8e8e93;margin-top:40px">${q ? 'Aucun résultat' : 'Aucune note'}</p>`;
+  const el = $('#nlist'); el.className = 'v-' + nView;
+  el.innerHTML = L.length ? html + '</div>' : `<p style="text-align:center;color:#8e8e93;margin-top:40px">${q ? 'Aucun résultat' : 'Aucune note'}</p>`;
   $('#ncount').textContent = NOTES.length + (NOTES.length > 1 ? ' notes' : ' note');
 }
 async function notesOpen() { await notesLoad(); $('#nsearch').value = ''; notesDraw(); show('notes'); }
@@ -469,9 +478,26 @@ async function notesImport(files) {
   await nSave(); notesDraw();
   toast(n ? `${n} note${n > 1 ? 's' : ''} importée${n > 1 ? 's' : ''}` : 'Aucune note lisible (les notes écrites à la main n’ont pas de texte)', 3000);
 }
-$('#nmore').onclick = () => sheet('Notes', [
-  { v: 'imp', ico: '📥', cls: 'y', label: 'Importer des notes', sub: 'Notes Samsung (.sdocx), texte ou Word' }
-], v => { if (v === 'imp') { pickerOpen = true; setTimeout(() => pickerOpen = false, 90000); $('#nin').click(); } });
+$('#nmore').onclick = async () => {
+  const ck = b => b ? ' ✓' : '';
+  const v = await sheet('Notes', [
+    { v: 'list', ico: '☰', label: 'Liste' + ck(nView === 'list'), sub: 'Titre, date et début du texte' },
+    { v: 'grid', ico: '▦', label: 'Grille' + ck(nView === 'grid'), sub: 'Cartes avec un aperçu de la note' },
+    { v: 'compact', ico: '≡', label: 'Compacte' + ck(nView === 'compact'), sub: 'Seulement les titres, pour voir beaucoup de notes' },
+    { v: 'sort', ico: '⇅', label: 'Trier : ' + ({ upd: 'date de modification', cre: 'date de création', az: 'titre (A → Z)' })[nSort], sub: 'Touchez pour changer' },
+    { v: 'imp', ico: '📥', cls: 'y', label: 'Importer des notes', sub: 'Notes Samsung (.sdocx), texte ou Word' }
+  ]);
+  if (['list', 'grid', 'compact'].includes(v)) { nView = v; try { localStorage.setItem('nview', v); } catch (e) {} notesDraw(); }
+  if (v === 'sort') {
+    const s = await sheet('Trier les notes', [
+      { v: 'upd', ico: '🕑', label: 'Date de modification' + ck(nSort === 'upd') },
+      { v: 'cre', ico: '📅', label: 'Date de création' + ck(nSort === 'cre') },
+      { v: 'az', ico: '🔤', label: 'Titre (A → Z)' + ck(nSort === 'az') }
+    ]);
+    if (s) { nSort = s; try { localStorage.setItem('nsort', s); } catch (e) {} notesDraw(); }
+  }
+  if (v === 'imp') { pickerOpen = true; setTimeout(() => pickerOpen = false, 90000); $('#nin').click(); }
+};
 $('#nin').onchange = e => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) notesImport(fs); };
 // notes reçues pendant que l'appli était fermée (partage depuis Samsung Notes) : déjà rangées par le service worker
 /* notes envoyées par l'appli Android (lues sur le téléphone) : #addnote=<base64url du JSON> */
