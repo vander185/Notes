@@ -120,7 +120,10 @@ public class ImportActivity extends Activity {
 
     private void start() {
         if (sources.isEmpty()) { finish(); return; }
-        toast(sources.size() > 1 ? "Mise à l'abri de " + sources.size() + " fichiers…" : "Mise à l'abri…");
+        boolean anyMedia = false;
+        for (Uri u : sources) if (isMedia(u)) { anyMedia = true; break; }
+        if (anyMedia) toast(sources.size() > 1 ? "Mise à l'abri de " + sources.size() + " fichiers…" : "Mise à l'abri…");
+        else toast(sources.size() > 1 ? "Envoi de " + sources.size() + " notes vers le bloc-notes…" : "Envoi de la note vers le bloc-notes…");
         new Thread(() -> {
             for (Uri u : sources) {
                 Uri c = copy(u);

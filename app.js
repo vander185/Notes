@@ -282,6 +282,17 @@ async function zipBytes(buf, want) {
   }
   return null;
 }
+function zipNames(buf) {
+  const u8 = new Uint8Array(buf), dv = new DataView(buf), out = [];
+  let e = u8.length - 22; while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) return out;
+  let p = dv.getUint32(e + 16, true); const n = dv.getUint16(e + 10, true);
+  for (let i = 0; i < n && p + 46 <= u8.length; i++) {
+    const fl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+    out.push(new TextDecoder().decode(u8.subarray(p + 46, p + 46 + fl))); p += 46 + fl + xl + cl;
+  }
+  return out;
+}
 function sdocxText(raw) {
   const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength); let p = 0;
   const u8 = () => raw[p++], u16 = () => { const v = dv.getUint16(p, true); p += 2; return v; }, u32 = () => { const v = dv.getUint32(p, true); p += 4; return v; };
@@ -313,14 +324,14 @@ function sdocxText(raw) {
   const modified = Number(dv.getBigInt64(p, true)); p += 8;
   p += 16; u32();                         // dimensions, marges, version minimale
   const ts = u32(); let title = ''; try { title = textObj(raw.subarray(p, p + ts)); } catch (e) {} p += ts;
-  const bs = u32(), bb = raw.subarray(p, p + bs); let body = textObj(bb);
+  const bs = u32(), bb = raw.subarray(p, p + bs); let body = ''; try { body = textObj(bb); } catch (e) {}
   if (!body.replace(/[\uFFFC\s]/g, '')) { const r = sdocxRuns(raw.subarray(p)); body = r.filter((x, i) => !r.slice(0, i).some(y => y.includes(x))).join('\n'); }   // texte rangé dans des tableaux
   const clean = s => s.replace(/\uFFFC/g, '').replace(/[\u2028\u2029\r]/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   const okT = t => t > 9.4e11 && t < Date.now() + 864e5;  // millisecondes plausibles
   return { title: clean(title), body: clean(body), t: okT(modified) ? modified : okT(created) ? created : 0 };
 }
 /* repli : chaînes UTF-16 précédées de leur longueur (u32) — texte des tableaux, zones de texte des pages */
-function sdocxRuns(b) {
+function sdocxRuns(b, strict) {
   const d = new DataView(b.buffer, b.byteOffset, b.byteLength), out = [];
   const ok = c => c === 9 || c === 10 || c === 13 || c === 0x2029 || c === 0x2028 || c === 0xFFFC || (c >= 0x20 && c < 0xD800) || (c >= 0xE000 && c < 0xFFF0);
   for (let i = 0; i + 6 <= b.length; i++) {
@@ -329,7 +340,7 @@ function sdocxRuns(b) {
     if (j < n) continue;
     const s = new TextDecoder('utf-16le').decode(b.subarray(i + 4, i + 4 + n * 2));
     if (!/\p{L}/u.test(s) || /^[0-9a-f-]{20,}$/i.test(s)) continue;
-    if (!/^[\t\n\r\u0020-\u024F\u0370-\u06FF\u0750-\u077F\u1E00-\u1EFF\u2000-\u206F\u20A0-\u20CF\uFFFC]+$/.test(s) && (s.length < 4 || !/\s/.test(s))) continue;   // écarte les données binaires qui ressemblent à du texte
+    if (!/^[\t\n\r\u0020-\u024F\u0370-\u06FF\u0750-\u077F\u1E00-\u1EFF\u2000-\u206F\u20A0-\u20CF\uFFFC]+$/.test(s) && (strict || s.length < 4 || !/\s/.test(s))) continue;   // écarte les données binaires qui ressemblent à du texte
     if ((s.match(/\p{L}/gu) || []).length < 2) continue;
     out.push(s); i += 3 + n * 2;
   }
@@ -341,8 +352,14 @@ async function noteFromFile(f) {
   let txt = '';
   let upd = f.lastModified || Date.now();
   if (/\.sdocx$/i.test(f.name || '') || /sdoc/i.test(f.type || '')) {   // note Samsung Notes d'origine
-    const raw = await zipBytes(await f.arrayBuffer(), 'note.note'); if (!raw) return null;
-    const r = sdocxText(raw); if (r.t) upd = r.t;
+    const buf = await f.arrayBuffer(), raw = await zipBytes(buf, 'note.note'); if (!raw) return null;
+    let r; try { r = sdocxText(raw); } catch (e) { r = { title: '', body: '', t: 0 }; }
+    if (r.t) upd = r.t;
+    if (!r.body) {   // autre version du format : on cherche le texte dans la note et dans ses pages
+      const runs = [...sdocxRuns(raw)];
+      for (const pn of zipNames(buf).filter(x => /\.page$/i.test(x))) { const pb = await zipBytes(buf, pn); if (pb) runs.push(...sdocxRuns(pb, true)); }
+      r.body = runs.filter((x, i) => x !== r.title && !runs.slice(0, i).some(y => y.includes(x))).join('\n').replace(/\uFFFC/g, '').trim();
+    }
     txt = [r.title, r.body].filter(Boolean).join('\n');
     if (!txt) return null;
     return { txt: r.title || !name ? txt : name + '\n' + txt, upd };
@@ -372,7 +389,15 @@ $('#nmore').onclick = () => sheet('Notes', [
 ], v => { if (v === 'imp') { pickerOpen = true; setTimeout(() => pickerOpen = false, 90000); $('#nin').click(); } });
 $('#nin').onchange = e => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) notesImport(fs); };
 // notes reçues pendant que l'appli était fermée (partage depuis Samsung Notes) : déjà rangées par le service worker
-(() => { const m = /[?&]notes=(\d+)/.exec(location.search); if (m && +m[1]) setTimeout(() => toast(`${m[1]} note${+m[1] > 1 ? 's' : ''} importée${+m[1] > 1 ? 's' : ''}`, 3000), 800); })();
+(() => {
+  const q = location.search, m = /[?&]notes=(\d+)/.exec(q), b = /[?&]bad=(\d+)/.exec(q), s = /[?&]shared=(\w+)/.exec(q);
+  let msg = '';
+  if (m && +m[1]) msg = `${m[1]} note${+m[1] > 1 ? 's' : ''} importée${+m[1] > 1 ? 's' : ''} dans le bloc-notes`;
+  if (b && +b[1]) msg += (msg ? ' · ' : '') + `${b[1]} note${+b[1] > 1 ? 's' : ''} sans texte lisible : gardée${+b[1] > 1 ? 's' : ''} dans le coffre`;
+  if (!msg && s && s[1] === 'err') msg = 'Le partage a échoué : réessayez';
+  if (!msg && s && s[1] === '0') msg = 'Rien n’a été reçu du partage';
+  if (msg) setTimeout(() => toast(msg, 5000), 800);
+})();
 
 // Porte secrète : le code tapé dans « Rechercher »
 let sT, sTried = '';
