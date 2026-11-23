@@ -27,7 +27,7 @@ import org.vosk.android.RecognitionListener;
 import org.vosk.android.SpeechService;
 import org.vosk.android.StorageService;
 
-import com.google.androidbrowserhelper.trusted.LauncherActivity;
+import android.app.KeyguardManager;
 
 /**
  * Écoute en continu le mot « Claire », sur le téléphone (modèle Vosk français, hors ligne).
@@ -117,8 +117,10 @@ public class WakeService extends Service implements RecognitionListener {
     }
 
     private Intent talkIntent() {
-        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.launch_url) + "?talk=1"), this, LauncherActivity.class);
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        KeyguardManager k = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+        boolean locked = k != null && k.isKeyguardLocked();
+        Intent i = new Intent(this, MainActivity.class).putExtra("talk", true).putExtra("lock", locked);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         return i;
     }
 
@@ -145,7 +147,7 @@ public class WakeService extends Service implements RecognitionListener {
     }
 
     private Notification notif(String text) {
-        Intent open = new Intent(this, LauncherActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         PendingIntent pOpen = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE);
         PendingIntent pStop = PendingIntent.getService(this, 1, new Intent(this, WakeService.class).setAction(STOP), PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CH) : new Notification.Builder(this);
