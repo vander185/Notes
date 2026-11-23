@@ -1,5 +1,5 @@
 // Fonctionne hors ligne. Les fichiers du coffre ne passent jamais par ici (ils restent dans IndexedDB).
-const C = 'notes-v9', FILES = ['./', 'index.html', 'app.js', 'manifest.json', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png', 'favicon-32.png', 'oauth.html', 'oauth.js'];
+const C = 'notes-v10', FILES = ['./', 'index.html', 'app.js', 'manifest.json', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png', 'favicon-32.png', 'oauth.html', 'oauth.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(C).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' }))))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x => x !== C).map(x => caches.delete(x)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
@@ -163,7 +163,7 @@ async function noteFromFile(f) {
   const name = (f.name || 'Note').replace(/\.[^.]+$/, '');
   let txt = '';
   let upd = f.lastModified || Date.now();
-  if (/\.sdocx$/i.test(f.name || '')) {   // note Samsung Notes d'origine
+  if (/\.sdocx$/i.test(f.name || '') || /sdoc/i.test(f.type || '')) {   // note Samsung Notes d'origine
     const raw = await zipBytes(await f.arrayBuffer(), 'note.note'); if (!raw) return null;
     const r = sdocxText(raw); if (r.t) upd = r.t;
     txt = [r.title, r.body].filter(Boolean).join('\n');
@@ -180,4 +180,4 @@ async function noteFromFile(f) {
   if (name && !txt.toLowerCase().startsWith(name.toLowerCase()) && !/^(note|memo|texte|text|fichier)[-_ ]?\d*$/i.test(name)) txt = name + '\n' + txt;
   return { txt, upd };
 }
-const isNoteFile = f => /^text\//.test(f.type || '') || /wordprocessingml|msword/.test(f.type || '') || /\.(txt|md|docx|sdocx|html?)$/i.test(f.name || '');
+const isNoteFile = f => /^text\//.test(f.type || '') || /wordprocessingml|msword|sdoc/.test(f.type || '') || /\.(txt|md|docx|sdocx|html?)$/i.test(f.name || '');

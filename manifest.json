@@ -47,7 +47,8 @@
             ".sdocx",
             "application/octet-stream",
             "application/zip",
-            "application/sdocx"
+            "application/sdocx",
+            "*/*"
           ]
         }
       ]

@@ -340,7 +340,7 @@ async function noteFromFile(f) {
   const name = (f.name || 'Note').replace(/\.[^.]+$/, '');
   let txt = '';
   let upd = f.lastModified || Date.now();
-  if (/\.sdocx$/i.test(f.name || '')) {   // note Samsung Notes d'origine
+  if (/\.sdocx$/i.test(f.name || '') || /sdoc/i.test(f.type || '')) {   // note Samsung Notes d'origine
     const raw = await zipBytes(await f.arrayBuffer(), 'note.note'); if (!raw) return null;
     const r = sdocxText(raw); if (r.t) upd = r.t;
     txt = [r.title, r.body].filter(Boolean).join('\n');
@@ -357,7 +357,7 @@ async function noteFromFile(f) {
   if (name && !txt.toLowerCase().startsWith(name.toLowerCase()) && !/^(note|memo|texte|text|fichier)[-_ ]?\d*$/i.test(name)) txt = name + '\n' + txt;
   return { txt, upd };
 }
-const isNoteFile = f => /^text\//.test(f.type || '') || /wordprocessingml|msword/.test(f.type || '') || /\.(txt|md|docx|sdocx|html?)$/i.test(f.name || '');
+const isNoteFile = f => /^text\//.test(f.type || '') || /wordprocessingml|msword|sdoc/.test(f.type || '') || /\.(txt|md|docx|sdocx|html?)$/i.test(f.name || '');
 
 async function notesImport(files) {
   let n = 0;
