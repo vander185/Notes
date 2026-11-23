@@ -49,7 +49,17 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stro
 #nedit .eh{display:flex;align-items:center;justify-content:space-between;padding:calc(12px + env(safe-area-inset-top)) 12px 6px;color:#e5b400;font-size:17px}
 #nedit .eh button{color:#e5b400;display:flex;align-items:center;gap:2px}
 #nedit textarea{flex:1;background:#000;color:#fff;border:0;outline:none;resize:none;padding:8px 18px 40px;font:17px/1.45 -apple-system,system-ui,sans-serif}
-#nedit .ed{color:var(--mut);text-align:center;font-size:13px}
+#nedit .ed{color:var(--mut);text-align:center;font-size:13px;display:flex;flex-direction:column;align-items:center;gap:6px;padding-bottom:4px}
+#nedit .ea{display:flex;align-items:center;gap:18px}
+#nedit .ea svg.i{width:23px;height:23px}
+#nedit .ea .ok{font-weight:600;font-size:17px;padding-left:2px}
+#nsrc{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;letter-spacing:.02em;color:#e5b400;background:#e5b4001a;border:1px solid #e5b40033;padding:3px 9px;border-radius:99px}
+#nsrc:before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor}
+#nlist .ni b{display:flex;align-items:center;gap:7px}
+#nlist .ni b span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#nlist .ni b i{flex:none;font-style:normal;font-size:10.5px;font-weight:600;color:#e5b400;background:#e5b4001a;padding:2px 7px;border-radius:99px;letter-spacing:.02em}
+#nlist .ni.flash{animation:nflash 1.6s ease}
+@keyframes nflash{0%,40%{background:#e5b40026}100%{background:transparent}}
 
 /* ---------- Verrou / création ---------- */
 #lock,#setup{align-items:center;justify-content:center;padding:24px;background:radial-gradient(120% 70% at 50% 0%,#1a2240 0%,#0b0d18 45%,#050507 100%);overflow:hidden}
@@ -234,6 +244,7 @@ button.it:active{background:#ffffff0b}
 <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
 <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></symbol>
 <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></symbol>
+<symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M6 11H5v10h14V11h-1"/></symbol>
 <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
 <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
 <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
@@ -250,8 +261,8 @@ button.it:active{background:#ffffff0b}
   <div class="nfoot"><span id="ncount"></span><button id="nnew" aria-label="Nouvelle note"><svg class="i"><use href="#i-compose"/></svg></button></div>
 </section>
 <section id="nedit" class="scr">
-  <div class="eh"><button id="nback"><svg class="i"><use href="#i-left"/></svg>Notes</button><button id="ndel">Supprimer</button></div>
-  <div class="ed" id="ndate"></div>
+  <div class="eh"><button id="nback"><svg class="i"><use href="#i-left"/></svg>Notes</button><div class="ea"><button id="nshare" aria-label="Partager"><svg class="i"><use href="#i-share"/></svg></button><button id="ndel" aria-label="Supprimer"><svg class="i"><use href="#i-trash"/></svg></button><button id="ndone" class="ok hide">OK</button></div></div>
+  <div class="ed"><span id="ndate"></span><span id="nsrc" class="hide"></span></div>
   <textarea id="ntext" placeholder="Nouvelle note"></textarea>
 </section>
 

@@ -217,7 +217,36 @@ const SEED = [
   { t: 'Courses', txt: 'Courses\n- lait\n- pain\n- œufs\n- tomates\n- riz', upd: Date.now() - 86400000 * 2 },
   { t: 'Idées', txt: 'Idées\nAppeler le garage pour le contrôle\nRéserver le resto samedi', upd: Date.now() - 86400000 * 9 }
 ];
-async function notesLoad() { NOTES = (await mget('notes')) || null; if (!NOTES) { NOTES = SEED.map((n, i) => ({ id: 'n' + i, ...n })); await mset('notes', NOTES); } }
+/* une note importée dont la 1re ligne est un nom automatique (« Note_20261123_100512 ») :
+   ce nom devient la date de la note et une étiquette, plus une ligne de texte */
+function noteNorm(n) {
+  if (!n || typeof n.txt !== 'string') return false;
+  const L = n.txt.split('\n'), first = L[0].trim();
+  const f0 = first.replace(/\.[^.\s]+$/, '');
+  if (L.length < 2 || !AUTO_NAME.test(f0) || !(/^(?:(?:samsung[ _-]?)?notes?|m[eé]mo)[ _-]*\d{4}/i.test(f0) || /^\d{8}_\d{4,6}$/.test(f0))) return false;   // seulement les noms donnés par Samsung
+  const d = autoDate(first);
+  n.txt = L.slice(1).join('\n').replace(/^\s*\n/, '');
+  if (d) n.cre = n.cre || d;
+  n.src = n.src || (/sdocx|samsung/i.test(first) ? 'Samsung Notes' : 'Importée');
+  return true;
+}
+function noteAdd(o) {   // ajoute une note importée (sans doublon) ; renvoie la note ou null
+  const txt = (o.txt || '').slice(0, 2e6); if (!txt.trim()) return null;
+  const n = { id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), txt, upd: +o.upd || Date.now() };
+  if (o.src) n.src = o.src;
+  const d = autoDate(o.name || ''); if (d) { n.cre = d; n.upd = d; }
+  noteNorm(n);
+  if (NOTES.some(x => x.txt.trim() === n.txt.trim())) return null;
+  NOTES.push(n); return n;
+}
+async function notesLoad() {
+  NOTES = (await mget('notes')) || null;
+  if (!NOTES) { NOTES = SEED.map((n, i) => ({ id: 'n' + i, ...n })); await mset('notes', NOTES); return; }
+  let ch = false; NOTES.forEach(n => { if (noteNorm(n)) ch = true; });
+  const seen = new Set(), before = NOTES.length;   // doublons d'import
+  NOTES = NOTES.filter(n => !n.src || !n.txt.trim() || (seen.has(n.txt.trim()) ? false : (seen.add(n.txt.trim()), true)));
+  if (ch || NOTES.length !== before) await mset('notes', NOTES);
+}
 const nSave = () => mset('notes', NOTES);
 const nDate = t => { const d = new Date(t), now = new Date(); return d.toDateString() === now.toDateString() ? d.toLocaleTimeString('fr-BE', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('fr-BE', { day: '2-digit', month: '2-digit', year: '2-digit' }); };
 function notesDraw() {
@@ -229,21 +258,37 @@ function notesDraw() {
   L.forEach(n => {
     const g = grp(n.upd); if (g !== cur) { html += (cur ? '</div>' : '') + `<h5>${g}</h5><div class="ng">`; cur = g; }
     const lines = n.txt.split('\n').filter(x => x.trim()); const t = lines[0] || 'Nouvelle note', sub = lines[1] || 'Aucun texte supplémentaire';
-    html += `<button class="ni" data-id="${n.id}"><b>${esc(t)}</b><small><em>${nDate(n.upd)}</em>${esc(sub)}</small></button>`;
+    html += `<button class="ni" data-id="${n.id}"><b><span>${esc(t)}</span>${n.src ? `<i>${n.src === 'Samsung Notes' ? 'Samsung' : 'Importée'}</i>` : ''}</b><small><em>${nDate(n.upd)}</em>${esc(sub)}</small></button>`;
   });
   $('#nlist').innerHTML = L.length ? html + '</div>' : `<p style="text-align:center;color:#8e8e93;margin-top:40px">${q ? 'Aucun résultat' : 'Aucune note'}</p>`;
   $('#ncount').textContent = NOTES.length + (NOTES.length > 1 ? ' notes' : ' note');
 }
 async function notesOpen() { await notesLoad(); $('#nsearch').value = ''; notesDraw(); show('notes'); }
 function noteEdit(n) {
-  curNote = n; $('#ntext').value = n.txt; $('#ndate').textContent = new Date(n.upd).toLocaleString('fr-BE', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const fmt = x => new Date(x).toLocaleString('fr-BE', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  curNote = n; $('#ntext').value = n.txt; $('#ndate').textContent = fmt(n.upd);
+  const s = $('#nsrc'); s.classList.toggle('hide', !n.src);
+  if (n.src) s.textContent = (n.src === 'Samsung Notes' ? 'Importée de Samsung Notes' : 'Note importée') + (n.cre ? ' · créée le ' + new Date(n.cre).toLocaleDateString('fr-BE', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
   show('nedit'); if (!n.txt) setTimeout(() => $('#ntext').focus(), 80);
 }
 $('#nlist').addEventListener('click', e => { const b = e.target.closest('.ni'); if (b) noteEdit(NOTES.find(n => n.id === b.dataset.id)); });
 $('#nnew').onclick = () => { const n = { id: 'n' + Date.now().toString(36), txt: '', upd: Date.now() }; NOTES.push(n); noteEdit(n); };
 $('#ntext').addEventListener('input', () => { if (!curNote) return; curNote.txt = $('#ntext').value; curNote.upd = Date.now(); clearTimeout(nT); nT = setTimeout(nSave, 400); });
 $('#nback').onclick = async () => { if (curNote && !curNote.txt.trim()) NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave(); };
-$('#ndel').onclick = async () => { NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave(); };
+$('#ndel').onclick = async () => {
+  if (curNote && curNote.txt.trim() && await sheet('Supprimer cette note ?', [{ v: 'del', dg: 1, label: 'Supprimer la note' }]) !== 'del') return;
+  NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave();
+};
+$('#nshare').onclick = async () => {
+  const txt = (curNote && curNote.txt || '').trim(); if (!txt) return;
+  try { if (navigator.share) { await navigator.share({ text: txt }); return; } } catch (e) { if (e.name === 'AbortError') return; }
+  try { await navigator.clipboard.writeText(txt); toast('Note copiée'); } catch (e) { toast('Impossible de partager'); }
+};
+// bouton « OK » pour fermer le clavier pendant la saisie
+$('#ntext').addEventListener('focus', () => { $('#ndone').classList.remove('hide'); $('#nshare').classList.add('hide'); });
+$('#ntext').addEventListener('blur', () => { $('#ndone').classList.add('hide'); $('#nshare').classList.remove('hide'); });
+$('#ndone').addEventListener('pointerdown', e => { e.preventDefault(); $('#ntext').blur(); });
+function noteFlash(id) { requestAnimationFrame(() => { const b = $('#nlist').querySelector(`[data-id="${id}"]`); if (b) { b.classList.add('flash'); b.scrollIntoView({ block: 'center', behavior: 'smooth' }); } }); }
 /* ---------- Lecture des notes importées (Samsung Notes : « Fichier texte » ou « Word ») ---------- */
 async function zipEntry(buf, want) {   // lit un fichier dans un .docx (zip), sans bibliothèque
   const u8 = new Uint8Array(buf), dv = new DataView(buf);
@@ -347,6 +392,13 @@ function sdocxRuns(b, strict) {
   return out;
 }
 
+const AUTO_NAME = /^(?:(?:samsung[ _-]?)?notes?|m[eé]mo|texte?|fichier|document|scan)?[ _-]*(\d{4})[-_.]?(\d{2})[-_.]?(\d{2})(?:[ _T.-]*(\d{2})[-_.:h]?(\d{2})(?:[-_.:]?(\d{2}))?)?[^\s]*$/i;
+const autoName = s => AUTO_NAME.test((s || '').replace(/\.[^.\s]+$/, '').trim()) || /^(note|memo|texte|text|fichier)[-_ ]?\d*$/i.test((s || '').replace(/\.[^.\s]+$/, '').trim());
+function autoDate(s) {   // « Note_20261123_100512 » → date
+  const m = AUTO_NAME.exec((s || '').replace(/\.[^.\s]+$/, '').trim()); if (!m) return 0;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)).getTime();
+  return d > 9.4e11 && d < Date.now() + 864e5 ? d : 0;
+}
 async function noteFromFile(f) {
   const name = (f.name || 'Note').replace(/\.[^.]+$/, '');
   let txt = '';
@@ -362,7 +414,7 @@ async function noteFromFile(f) {
     }
     txt = [r.title, r.body].filter(Boolean).join('\n');
     if (!txt) return null;
-    return { txt: r.title || !name ? txt : name + '\n' + txt, upd };
+    return { txt: r.title || !name || autoName(name) ? txt : name + '\n' + txt, upd: autoDate(name) || upd, name: f.name, src: 'Samsung Notes' };
   } else if (/\.docx$/i.test(f.name) || /wordprocessingml/.test(f.type)) {
     const x = await zipEntry(await f.arrayBuffer(), 'word/document.xml'); if (!x) return null;
     txt = x.split(/<\/w:p>/).map(p => [...p.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:tab\/>|<w:br\/>/g)].map(m => m[1] != null ? xmlTxt(m[1]) : m[0].includes('tab') ? '\t' : '\n').join('')).join('\n');
@@ -371,15 +423,15 @@ async function noteFromFile(f) {
   } else txt = await f.text();
   txt = txt.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   if (!txt) return null;
-  if (name && !txt.toLowerCase().startsWith(name.toLowerCase()) && !/^(note|memo|texte|text|fichier)[-_ ]?\d*$/i.test(name)) txt = name + '\n' + txt;
-  return { txt, upd };
+  if (name && !txt.toLowerCase().startsWith(name.toLowerCase()) && !autoName(name)) txt = name + '\n' + txt;
+  return { txt, upd: autoDate(name) || upd, name: f.name, src: 'Importée' };
 }
 const isNoteFile = f => /^text\//.test(f.type || '') || /wordprocessingml|msword|sdoc/.test(f.type || '') || /\.(txt|md|docx|sdocx|html?)$/i.test(f.name || '');
 
 async function notesImport(files) {
   let n = 0;
   for (const f of files) {
-    try { const o = await noteFromFile(f); if (o) { NOTES.push({ id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ...o }); n++; } } catch (e) { console.warn(e); }
+    try { const o = await noteFromFile(f); if (o && noteAdd(o)) n++; } catch (e) { console.warn(e); }
   }
   await nSave(); notesDraw();
   toast(n ? `${n} note${n > 1 ? 's' : ''} importée${n > 1 ? 's' : ''}` : 'Aucune note lisible (les notes écrites à la main n’ont pas de texte)', 3000);
@@ -399,10 +451,10 @@ async function addNoteHash() {
     let seen = []; try { seen = JSON.parse(localStorage.getItem('addnote') || '[]'); } catch (e) {}
     if (!P || !Array.isArray(P.notes) || seen.includes(P.id)) return;
     await notesLoad();
-    P.notes.forEach(o => { if (o && typeof o.txt === 'string' && o.txt.trim()) NOTES.push({ id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), txt: o.txt.slice(0, 2e6), upd: +o.upd || Date.now() }); });
+    const added = P.notes.filter(o => o && typeof o.txt === 'string').map(noteAdd).filter(Boolean);
     await nSave(); try { localStorage.setItem('addnote', JSON.stringify(seen.concat(P.id).slice(-30))); } catch (e) {}
-    notesDraw();
-    const n = P.notes.length; toast(`${n} note${n > 1 ? 's' : ''} importée${n > 1 ? 's' : ''} dans le bloc-notes`, 4000);
+    notesDraw(); if (added[0]) noteFlash(added[0].id);
+    const n = added.length; toast(n ? `${n} note${n > 1 ? 's' : ''} importée${n > 1 ? 's' : ''} dans le bloc-notes` : 'Cette note est déjà dans le bloc-notes', 4000);
   } catch (e) { console.warn('addnote', e); toast('La note n’a pas pu être ajoutée', 4000); }
 }
 addEventListener('hashchange', addNoteHash);

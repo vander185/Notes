@@ -47,7 +47,7 @@ final class NoteReader {
         if (txt == null) return null;
         txt = txt.replace("￼", "").replaceAll("\r\n?|[  ]", "\n").replaceAll("\n{3,}", "\n\n").trim();
         if (txt.isEmpty()) return null;
-        boolean generic = base.isEmpty() || base.matches("(?i)(note|memo|texte|text|fichier)[-_ ]?\\d*");
+        boolean generic = base.isEmpty() || base.matches("(?i)(note|memo|texte|text|fichier)[-_ ]?\\d*") || base.matches(".*\\d{6,}.*") || base.matches(".*\\d{4}[-_.]\\d{2}[-_.]\\d{2}.*");   // nom automatique (date) : pas un titre
         if ((title == null || title.isEmpty()) && !generic && !txt.toLowerCase().startsWith(base.toLowerCase())) txt = base + "\n" + txt;
         return txt;
     }

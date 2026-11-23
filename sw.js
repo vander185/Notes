@@ -1,5 +1,5 @@
 // Fonctionne hors ligne. Les fichiers du coffre ne passent jamais par ici (ils restent dans IndexedDB).
-const C = 'notes-v12', FILES = ['./', 'index.html', 'app.js', 'manifest.json', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png', 'favicon-32.png', 'oauth.html', 'oauth.js'];
+const C = 'notes-v13', FILES = ['./', 'index.html', 'app.js', 'manifest.json', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png', 'favicon-32.png', 'oauth.html', 'oauth.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(C).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' }))))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x => x !== C).map(x => caches.delete(x)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
@@ -36,7 +36,7 @@ async function shareIn(req) {
     if (notes.length) {
       await new Promise((ok, ko) => {
         const t = d.transaction('meta', 'readwrite'), st = t.objectStore('meta'), g = st.get('notes');
-        g.onsuccess = () => { const L = Array.isArray(g.result) ? g.result : []; notes.forEach(o => L.push({ id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ...o })); st.put(L, 'notes'); };
+        g.onsuccess = () => { const L = Array.isArray(g.result) ? g.result : []; notes.forEach(o => { const d = autoDate(o.name || ''), n = { id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), txt: o.txt, upd: o.upd }; if (o.src) n.src = o.src; if (d) n.cre = d; if (!L.some(x => x.txt.trim() === n.txt.trim())) L.push(n); }); st.put(L, 'notes'); };
         t.oncomplete = ok; t.onerror = () => ko(t.error);
       });
       nn = notes.length;
@@ -172,6 +172,13 @@ function sdocxRuns(b, strict) {
   return out;
 }
 
+const AUTO_NAME = /^(?:(?:samsung[ _-]?)?notes?|m[eé]mo|texte?|fichier|document|scan)?[ _-]*(\d{4})[-_.]?(\d{2})[-_.]?(\d{2})(?:[ _T.-]*(\d{2})[-_.:h]?(\d{2})(?:[-_.:]?(\d{2}))?)?[^\s]*$/i;
+const autoName = s => AUTO_NAME.test((s || '').replace(/\.[^.\s]+$/, '').trim()) || /^(note|memo|texte|text|fichier)[-_ ]?\d*$/i.test((s || '').replace(/\.[^.\s]+$/, '').trim());
+function autoDate(s) {   // « Note_20261123_100512 » → date
+  const m = AUTO_NAME.exec((s || '').replace(/\.[^.\s]+$/, '').trim()); if (!m) return 0;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)).getTime();
+  return d > 9.4e11 && d < Date.now() + 864e5 ? d : 0;
+}
 async function noteFromFile(f) {
   const name = (f.name || 'Note').replace(/\.[^.]+$/, '');
   let txt = '';
@@ -187,7 +194,7 @@ async function noteFromFile(f) {
     }
     txt = [r.title, r.body].filter(Boolean).join('\n');
     if (!txt) return null;
-    return { txt: r.title || !name ? txt : name + '\n' + txt, upd };
+    return { txt: r.title || !name || autoName(name) ? txt : name + '\n' + txt, upd: autoDate(name) || upd, name: f.name, src: 'Samsung Notes' };
   } else if (/\.docx$/i.test(f.name) || /wordprocessingml/.test(f.type)) {
     const x = await zipEntry(await f.arrayBuffer(), 'word/document.xml'); if (!x) return null;
     txt = x.split(/<\/w:p>/).map(p => [...p.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:tab\/>|<w:br\/>/g)].map(m => m[1] != null ? xmlTxt(m[1]) : m[0].includes('tab') ? '\t' : '\n').join('')).join('\n');
@@ -196,7 +203,7 @@ async function noteFromFile(f) {
   } else txt = await f.text();
   txt = txt.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   if (!txt) return null;
-  if (name && !txt.toLowerCase().startsWith(name.toLowerCase()) && !/^(note|memo|texte|text|fichier)[-_ ]?\d*$/i.test(name)) txt = name + '\n' + txt;
-  return { txt, upd };
+  if (name && !txt.toLowerCase().startsWith(name.toLowerCase()) && !autoName(name)) txt = name + '\n' + txt;
+  return { txt, upd: autoDate(name) || upd, name: f.name, src: 'Importée' };
 }
 const isNoteFile = f => /^text\//.test(f.type || '') || /wordprocessingml|msword|sdoc/.test(f.type || '') || /\.(txt|md|docx|sdocx|html?)$/i.test(f.name || '');

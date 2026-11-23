@@ -47,7 +47,7 @@ public class ImportActivity extends Activity {
     private final ArrayList<Uri> sources = new ArrayList<>();
     private final ArrayList<Uri> copies = new ArrayList<>();
     private boolean askedPermission = false, pickAfterPermission = false;
-    private final ArrayList<String> notes = new ArrayList<>();   // notes lues ici, envoyées au bloc-notes par lien direct
+    private final ArrayList<String> notes = new ArrayList<>(), noteNames = new ArrayList<>();   // notes lues ici, envoyées au bloc-notes par lien direct
     private final ArrayList<Uri> media = new ArrayList<>();   // sources qui sont des photos/vidéos (les seules à effacer)
 
     @Override
@@ -64,7 +64,7 @@ public class ImportActivity extends Activity {
                 CharSequence t = in.getCharSequenceExtra(Intent.EXTRA_TEXT);
                 String subj = in.getStringExtra(Intent.EXTRA_SUBJECT);
                 if (t != null && t.length() > 0) {
-                    notes.add((subj != null && !subj.isEmpty() && !t.toString().startsWith(subj) ? subj + "\n" : "") + t);
+                    notes.add((subj != null && !subj.isEmpty() && !t.toString().startsWith(subj) ? subj + "\n" : "") + t); noteNames.add("");
                     openNotes(); return;
                 }
             }
@@ -130,7 +130,7 @@ public class ImportActivity extends Activity {
                 if (!isMedia(u)) {   // note (Samsung Notes, texte, Word) : lue directement ici
                     String txt = null;
                     try { txt = NoteReader.read(readAll(u), displayName(u), getContentResolver().getType(u)); } catch (Throwable ignored) { }
-                    if (txt != null) { notes.add(txt); continue; }
+                    if (txt != null) { notes.add(txt); String dn = displayName(u); noteNames.add(dn != null ? dn : ""); continue; }
                 }
                 Uri c = copy(u);
                 if (c != null) { copies.add(c); if (isMedia(u)) media.add(u); }
@@ -375,7 +375,12 @@ public class ImportActivity extends Activity {
         try {
             org.json.JSONArray arr = new org.json.JSONArray();
             long now = System.currentTimeMillis();
-            for (String n : notes) arr.put(new org.json.JSONObject().put("txt", n).put("upd", now));
+            for (int i = 0; i < notes.size(); i++) {
+                String nm = i < noteNames.size() ? noteNames.get(i) : "";
+                org.json.JSONObject o = new org.json.JSONObject().put("txt", notes.get(i)).put("upd", now).put("name", nm);
+                if (nm.toLowerCase().endsWith(".sdocx")) o.put("src", "Samsung Notes");
+                arr.put(o);
+            }
             String json = new org.json.JSONObject().put("id", Long.toString(now, 36) + Long.toString(System.nanoTime() & 0xffffff, 36)).put("notes", arr).toString();
             String b64 = android.util.Base64.encodeToString(json.getBytes("UTF-8"), android.util.Base64.URL_SAFE | android.util.Base64.NO_WRAP | android.util.Base64.NO_PADDING);
             if (b64.length() > 400000) {   // note énorme : on passe par le chemin des fichiers
