@@ -427,6 +427,8 @@ public class ImportActivity extends Activity {
         return android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.URL_SAFE | android.util.Base64.NO_WRAP | android.util.Base64.NO_PADDING);
     }
 
+    private int limit = 60000;   // taille d'un paquet (le lien passe par Android puis Chrome : rester petit)
+
     private void sendChunk() {
         try {
             File f = pendingFile();
@@ -435,25 +437,36 @@ public class ImportActivity extends Activity {
             if (all.length() == 0) { f.delete(); finish(); return; }
             int n = all.length();
             String b64;
-            while (true) {   // paquet le plus grand possible sous ~150 Ko
+            while (true) {   // le plus de notes possible sous la limite
                 org.json.JSONArray part = new org.json.JSONArray();
                 for (int i = 0; i < n; i++) part.put(all.get(i));
+                if (n == 1) {   // une seule note trop longue : on la raccourcit pour qu'elle passe
+                    org.json.JSONObject o = part.getJSONObject(0);
+                    String tx = o.optString("txt");
+                    while (tx.length() > 2000 && pack(o.put("txt", tx).toString()).length() > limit) tx = tx.substring(0, tx.length() * 3 / 4);
+                    o.put("txt", tx);
+                }
                 String json = new org.json.JSONObject()
                         .put("id", Long.toString(System.currentTimeMillis(), 36) + Long.toString(System.nanoTime() & 0xffffff, 36))
                         .put("notes", part).put("more", all.length() - n).put("total", all.length()).toString();
                 b64 = pack(json);
-                if (b64.length() <= 200000 || n == 1) break;
-                n = Math.max(1, n * 200000 / b64.length() * 9 / 10);
+                if (b64.length() <= limit || n == 1) break;
+                n = Math.max(1, Math.min(n - 1, (int) ((long) n * limit / b64.length() * 9 / 10)));
+            }
+            Intent t = new Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.launch_url) + "#addnote=z" + b64), this, LauncherActivity.class);
+            t.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try {
+                startActivity(t);
+            } catch (RuntimeException big) {   // paquet refusé par Android (trop gros) : on réessaie plus petit
+                if (limit > 8000) { limit /= 2; sendChunk(); return; }
+                throw big;
             }
             org.json.JSONArray rest = new org.json.JSONArray();
             for (int i = n; i < all.length(); i++) rest.put(all.get(i));
             if (rest.length() == 0) f.delete();
             else try (OutputStream os = new FileOutputStream(f)) { os.write(rest.toString().getBytes("UTF-8")); }
-            Intent t = new Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.launch_url) + "#addnote=z" + b64), this, LauncherActivity.class);
-            t.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(t);
             if (rest.length() > 0) {   // la suite part toute seule, paquet par paquet
-                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(this::sendChunk, 3000);
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(this::sendChunk, 2500);
                 return;
             }
         } catch (Exception e) {
