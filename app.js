@@ -235,30 +235,41 @@ function noteAdd(o) {   // ajoute une note importée (sans doublon) ; renvoie la
   const n = { id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), txt, upd: +o.upd || Date.now() };
   if (o.src) n.src = o.src;
   const d = autoDate(o.name || ''); if (d) { n.cre = d; n.upd = d; }
-  noteNorm(n);
-  if (NOTES.some(x => x.txt.trim() === n.txt.trim())) return null;
+  if (typeof o.title === 'string') n.title = o.title.trim();
+  noteNorm(n); noteMig(n);
+  if (NOTES.some(x => nFull(x) === nFull(n))) return null;
   NOTES.push(n); return n;
 }
+/* titre séparé : les anciennes notes gardaient leur titre en 1re ligne */
+function noteMig(n) {
+  if (!n || typeof n.title === 'string') return false;
+  const L = (n.txt || '').split('\n'), f = (L[0] || '').trim();
+  if (L.length > 1 && f && f.length <= 80) { n.title = f; n.txt = L.slice(1).join('\n').replace(/^\s*\n/, ''); }
+  else n.title = '';
+  return true;
+}
+const nFull = n => ((n.title || '') + '\n' + (n.txt || '')).trim();
 async function notesLoad() {
   NOTES = (await mget('notes')) || null;
   if (!NOTES) { NOTES = SEED.map((n, i) => ({ id: 'n' + i, ...n })); await mset('notes', NOTES); return; }
-  let ch = false; NOTES.forEach(n => { if (noteNorm(n)) ch = true; });
+  let ch = false; NOTES.forEach(n => { if (noteNorm(n)) ch = true; if (noteMig(n)) ch = true; });
   const seen = new Set(), before = NOTES.length;   // doublons d'import
-  NOTES = NOTES.filter(n => !n.src || !n.txt.trim() || (seen.has(n.txt.trim()) ? false : (seen.add(n.txt.trim()), true)));
+  NOTES = NOTES.filter(n => !n.src || !nFull(n) || (seen.has(nFull(n)) ? false : (seen.add(nFull(n)), true)));
   if (ch || NOTES.length !== before) await mset('notes', NOTES);
 }
 const nSave = () => mset('notes', NOTES);
 const nDate = t => { const d = new Date(t), now = new Date(); return d.toDateString() === now.toDateString() ? d.toLocaleTimeString('fr-BE', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('fr-BE', { day: '2-digit', month: '2-digit', year: '2-digit' }); };
 function notesDraw() {
   const q = $('#nsearch').value.trim().toLowerCase();
-  const L = NOTES.filter(n => !q || n.txt.toLowerCase().includes(q)).sort((a, b) => b.upd - a.upd);
+  const L = NOTES.filter(n => !q || nFull(n).toLowerCase().includes(q)).sort((a, b) => (b.pin ? 1 : 0) - (a.pin ? 1 : 0) || b.upd - a.upd);
   const day = new Date(); day.setHours(0, 0, 0, 0); const d0 = day.getTime(), D = 86400000;
-  const grp = t => t >= d0 ? "Aujourd'hui" : t >= d0 - D ? 'Hier' : t >= d0 - 7 * D ? '7 jours précédents' : t >= d0 - 30 * D ? '30 jours précédents' : String(new Date(t).getFullYear());
+  const grp = n => n.pin ? '📌' : n.upd >= d0 ? "Aujourd'hui" : n.upd >= d0 - D ? 'Hier' : n.upd >= d0 - 7 * D ? '7 jours précédents' : n.upd >= d0 - 30 * D ? '30 jours précédents' : String(new Date(n.upd).getFullYear());
   let html = '', cur = null;
   L.forEach(n => {
-    const g = grp(n.upd); if (g !== cur) { html += (cur ? '</div>' : '') + `<h5>${g}</h5><div class="ng">`; cur = g; }
-    const lines = n.txt.split('\n').filter(x => x.trim()); const t = lines[0] || 'Nouvelle note', sub = lines[1] || 'Aucun texte supplémentaire';
-    html += `<button class="ni" data-id="${n.id}"><b><span>${esc(t)}</span>${n.src ? `<i>${n.src === 'Samsung Notes' ? 'Samsung' : 'Importée'}</i>` : ''}</b><small><em>${nDate(n.upd)}</em>${esc(sub)}</small></button>`;
+    const g = grp(n); if (g !== cur) { html += (cur ? '</div>' : '') + `<h5>${g === '📌' ? '<svg class="i pi"><use href="#i-pin"/></svg>Épinglées' : g}</h5><div class="ng">`; cur = g; }
+    const lines = (n.txt || '').split('\n').filter(x => x.trim());
+    const t = (n.title || '').trim() || lines[0] || '', sub = (n.title || '').trim() ? lines[0] : lines[1];
+    html += `<button class="ni" data-id="${n.id}"><b${t ? '' : ' class="nt"'}><span>${esc(t || 'Sans titre')}</span>${n.src ? `<i>${n.src === 'Samsung Notes' ? 'Samsung' : 'Importée'}</i>` : ''}</b><small><em>${nDate(n.upd)}</em>${esc(sub || 'Aucun texte supplémentaire')}</small></button>`;
   });
   $('#nlist').innerHTML = L.length ? html + '</div>' : `<p style="text-align:center;color:#8e8e93;margin-top:40px">${q ? 'Aucun résultat' : 'Aucune note'}</p>`;
   $('#ncount').textContent = NOTES.length + (NOTES.length > 1 ? ' notes' : ' note');
@@ -266,28 +277,50 @@ function notesDraw() {
 async function notesOpen() { await notesLoad(); $('#nsearch').value = ''; notesDraw(); show('notes'); }
 function noteEdit(n) {
   const fmt = x => new Date(x).toLocaleString('fr-BE', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  curNote = n; $('#ntext').value = n.txt; $('#ndate').textContent = fmt(n.upd);
+  noteMig(n); curNote = n; $('#ntitle').value = n.title || ''; $('#ntext').value = n.txt; $('#ndate').textContent = fmt(n.upd);
+  $('#npin').classList.toggle('on', !!n.pin); nStat();
   const s = $('#nsrc'); s.classList.toggle('hide', !n.src);
   if (n.src) s.textContent = (n.src === 'Samsung Notes' ? 'Importée de Samsung Notes' : 'Note importée') + (n.cre ? ' · créée le ' + new Date(n.cre).toLocaleDateString('fr-BE', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
-  show('nedit'); if (!n.txt) setTimeout(() => $('#ntext').focus(), 80);
+  show('nedit'); if (!n.txt && !n.title) setTimeout(() => $('#ntitle').focus(), 80);
 }
 $('#nlist').addEventListener('click', e => { const b = e.target.closest('.ni'); if (b) noteEdit(NOTES.find(n => n.id === b.dataset.id)); });
-$('#nnew').onclick = () => { const n = { id: 'n' + Date.now().toString(36), txt: '', upd: Date.now() }; NOTES.push(n); noteEdit(n); };
-$('#ntext').addEventListener('input', () => { if (!curNote) return; curNote.txt = $('#ntext').value; curNote.upd = Date.now(); clearTimeout(nT); nT = setTimeout(nSave, 400); });
-$('#nback').onclick = async () => { if (curNote && !curNote.txt.trim()) NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave(); };
+$('#nnew').onclick = () => { const n = { id: 'n' + Date.now().toString(36), title: '', txt: '', upd: Date.now() }; NOTES.push(n); noteEdit(n); };
+function nStat() {   // nombre de mots, discret en bas
+  const w = ((curNote && nFull(curNote)) || '').split(/\s+/).filter(Boolean).length;
+  $('#nstat').textContent = w ? `${w} mot${w > 1 ? 's' : ''}` : '';
+}
+function nChanged() { if (!curNote) return; curNote.title = $('#ntitle').value; curNote.txt = $('#ntext').value; curNote.upd = Date.now(); nStat(); clearTimeout(nT); nT = setTimeout(nSave, 400); }
+$('#ntext').addEventListener('input', nChanged);
+$('#ntitle').addEventListener('input', nChanged);
+$('#ntitle').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const a = $('#ntext'); a.focus(); a.setSelectionRange(0, 0); } });
+$('#nback').onclick = async () => { if (curNote && !nFull(curNote)) NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave(); };
+$('#npin').onclick = async () => { if (!curNote) return; curNote.pin = !curNote.pin; $('#npin').classList.toggle('on', curNote.pin); toast(curNote.pin ? 'Note épinglée en haut de la liste' : 'Note désépinglée'); await nSave(); };
+$('#nmenu').onclick = async () => {
+  if (!curNote) return;
+  const v = await sheet('Note', [
+    { v: 'copy', ico: '📋', label: 'Copier le texte' },
+    { v: 'dup', ico: '🗐', label: 'Dupliquer la note' },
+    { v: 'del', ico: '🗑️', dg: 1, label: 'Supprimer la note' }
+  ]);
+  if (v === 'copy') { try { await navigator.clipboard.writeText(nFull(curNote)); toast('Texte copié'); } catch (e) { toast('Copie impossible'); } }
+  if (v === 'dup') { const c = { ...curNote, id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), title: (curNote.title || 'Sans titre') + ' (copie)', upd: Date.now(), pin: false }; NOTES.push(c); await nSave(); noteEdit(c); toast('Note dupliquée'); }
+  if (v === 'del') $('#ndel').click();
+};
 $('#ndel').onclick = async () => {
-  if (curNote && curNote.txt.trim() && await sheet('Supprimer cette note ?', [{ v: 'del', dg: 1, label: 'Supprimer la note' }]) !== 'del') return;
+  if (curNote && nFull(curNote) && await sheet('Supprimer cette note ?', [{ v: 'del', dg: 1, label: 'Supprimer définitivement' }]) !== 'del') return;
   NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave();
 };
 $('#nshare').onclick = async () => {
-  const txt = (curNote && curNote.txt || '').trim(); if (!txt) return;
+  const txt = curNote ? nFull(curNote) : ''; if (!txt) return;
   try { if (navigator.share) { await navigator.share({ text: txt }); return; } } catch (e) { if (e.name === 'AbortError') return; }
   try { await navigator.clipboard.writeText(txt); toast('Note copiée'); } catch (e) { toast('Impossible de partager'); }
 };
 // bouton « OK » pour fermer le clavier pendant la saisie
-$('#ntext').addEventListener('focus', () => { $('#ndone').classList.remove('hide'); $('#nshare').classList.add('hide'); });
-$('#ntext').addEventListener('blur', () => { $('#ndone').classList.add('hide'); $('#nshare').classList.remove('hide'); });
-$('#ndone').addEventListener('pointerdown', e => { e.preventDefault(); $('#ntext').blur(); });
+['#ntext', '#ntitle'].forEach(s => {
+  $(s).addEventListener('focus', () => { $('#ndone').classList.remove('hide'); ['#nshare', '#npin', '#nmenu'].forEach(x => $(x).classList.add('hide')); });
+  $(s).addEventListener('blur', () => setTimeout(() => { if ([$('#ntext'), $('#ntitle')].includes(document.activeElement)) return; $('#ndone').classList.add('hide'); ['#nshare', '#npin', '#nmenu'].forEach(x => $(x).classList.remove('hide')); }, 50));
+});
+$('#ndone').addEventListener('pointerdown', e => { e.preventDefault(); document.activeElement.blur(); });
 function noteFlash(id) { requestAnimationFrame(() => { const b = $('#nlist').querySelector(`[data-id="${id}"]`); if (b) { b.classList.add('flash'); b.scrollIntoView({ block: 'center', behavior: 'smooth' }); } }); }
 /* ---------- Lecture des notes importées (Samsung Notes : « Fichier texte » ou « Word ») ---------- */
 async function zipEntry(buf, want) {   // lit un fichier dans un .docx (zip), sans bibliothèque

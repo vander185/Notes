@@ -53,6 +53,15 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stro
 #nedit .ea{display:flex;align-items:center;gap:18px}
 #nedit .ea svg.i{width:23px;height:23px}
 #nedit .ea .ok{font-weight:600;font-size:17px;padding-left:2px}
+#nedit .ea button.on{color:#e5b400}
+#nedit .ea button.on svg{fill:#e5b40055}
+#npin:not(.on){color:#e5b400aa}
+#ntitle{background:none;border:0;outline:none;color:#fff;font:700 26px/1.25 -apple-system,system-ui,sans-serif;letter-spacing:-.015em;padding:10px 18px 2px;width:100%}
+#ntitle::placeholder{color:#48484a}
+#nedit textarea::placeholder{color:#48484a}
+#nedit .nst{position:absolute;right:14px;bottom:calc(10px + env(safe-area-inset-bottom));font-size:11.5px;color:#636366;pointer-events:none}
+#nlist h5 .pi{display:inline-block;width:15px;height:15px;vertical-align:-1px;margin-right:6px;color:#e5b400}
+#nlist .ni b.nt{color:#8e8e93;font-weight:500}
 #nsrc{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;letter-spacing:.02em;color:#e5b400;background:#e5b4001a;border:1px solid #e5b40033;padding:3px 9px;border-radius:99px}
 #nsrc:before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor}
 #nlist .ni b{display:flex;align-items:center;gap:7px}
@@ -245,6 +254,7 @@ button.it:active{background:#ffffff0b}
 <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></symbol>
 <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></symbol>
 <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M6 11H5v10h14V11h-1"/></symbol>
+<symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 3.5h6M10 3.5l-.6 6.2L6.5 13h11l-2.9-3.3-.6-6.2M12 13v7.5"/></symbol>
 <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
 <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
 <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
@@ -261,9 +271,11 @@ button.it:active{background:#ffffff0b}
   <div class="nfoot"><span id="ncount"></span><button id="nnew" aria-label="Nouvelle note"><svg class="i"><use href="#i-compose"/></svg></button></div>
 </section>
 <section id="nedit" class="scr">
-  <div class="eh"><button id="nback"><svg class="i"><use href="#i-left"/></svg>Notes</button><div class="ea"><button id="nshare" aria-label="Partager"><svg class="i"><use href="#i-share"/></svg></button><button id="ndel" aria-label="Supprimer"><svg class="i"><use href="#i-trash"/></svg></button><button id="ndone" class="ok hide">OK</button></div></div>
+  <div class="eh"><button id="nback"><svg class="i"><use href="#i-left"/></svg>Notes</button><div class="ea"><button id="npin" aria-label="Épingler"><svg class="i"><use href="#i-pin"/></svg></button><button id="nshare" aria-label="Partager"><svg class="i"><use href="#i-share"/></svg></button><button id="nmenu" aria-label="Plus d'options"><svg class="i"><use href="#i-more"/></svg></button><button id="ndone" class="ok hide">OK</button><button id="ndel" hidden></button></div></div>
   <div class="ed"><span id="ndate"></span><span id="nsrc" class="hide"></span></div>
-  <textarea id="ntext" placeholder="Nouvelle note"></textarea>
+  <input id="ntitle" type="text" placeholder="Titre" maxlength="200" autocomplete="off" enterkeyhint="next">
+  <textarea id="ntext" placeholder="Écrivez votre note…"></textarea>
+  <div class="nst" id="nstat"></div>
 </section>
 
 <!-- 2. Verrou classique -->
