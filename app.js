@@ -475,9 +475,13 @@ $('#nmore').onclick = () => sheet('Notes', [
 $('#nin').onchange = e => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) notesImport(fs); };
 // notes reçues pendant que l'appli était fermée (partage depuis Samsung Notes) : déjà rangées par le service worker
 /* notes envoyées par l'appli Android (lues sur le téléphone) : #addnote=<base64url du JSON> */
-async function addNoteHash() {
+let addQ = Promise.resolve();
+function addNoteHash() {   // les paquets arrivent les uns après les autres : traités dans l'ordre
   const h = location.hash; if (!h.startsWith('#addnote=')) return;
   try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  addQ = addQ.then(() => addNoteRun(h)).catch(() => {});
+}
+async function addNoteRun(h) {
   try {
     const z = h[9] === 'z', s = h.slice(z ? 10 : 9);
     const b = atob(s.replace(/-/g, '+').replace(/_/g, '/')); let u = Uint8Array.from(b, c => c.charCodeAt(0));
@@ -491,12 +495,9 @@ async function addNoteHash() {
     notesDraw(); if (added[0]) noteFlash(added[0].id);
     const n = added.length, more = +P.more || 0;
     window._impN = (window._impN || 0) + n;
-    if (more > 0) {   // gros import : l'appli Android envoie la suite quand on la lui demande
-      const v = await sheet(`${window._impN} note${window._impN > 1 ? 's' : ''} importée${window._impN > 1 ? 's' : ''} · ${more} restante${more > 1 ? 's' : ''}`, [{ v: 'go', ico: '📥', cls: 'y', label: 'Importer la suite', sub: `${more} note${more > 1 ? 's' : ''}` }]);
-      if (v === 'go') location.href = 'intent://next#Intent;scheme=notesimport;package=io.github.vander185.notes;end';
-      return;
-    }
-    const tot = window._impN; window._impN = 0;
+    window._impT = window._impT || +P.total || n + more;
+    if (more > 0) { toast(`Import en cours… ${window._impN} / ${window._impT}`, 4000); return; }   // la suite arrive toute seule
+    const tot = window._impN; window._impN = 0; window._impT = 0;
     const unread = P.notes.filter(o => o && o.unread).length;
     toast(tot ? `${tot} note${tot > 1 ? 's' : ''} importée${tot > 1 ? 's' : ''} dans le bloc-notes` + (unread ? ` (${unread} sans texte lisible)` : '') : 'Ces notes sont déjà dans le bloc-notes', 5000);
   } catch (e) { console.warn('addnote', e); toast('La note n’a pas pu être ajoutée', 4000); }

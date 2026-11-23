@@ -442,8 +442,8 @@ public class ImportActivity extends Activity {
                         .put("id", Long.toString(System.currentTimeMillis(), 36) + Long.toString(System.nanoTime() & 0xffffff, 36))
                         .put("notes", part).put("more", all.length() - n).put("total", all.length()).toString();
                 b64 = pack(json);
-                if (b64.length() <= 150000 || n == 1) break;
-                n = Math.max(1, n * 150000 / b64.length() * 9 / 10);
+                if (b64.length() <= 200000 || n == 1) break;
+                n = Math.max(1, n * 200000 / b64.length() * 9 / 10);
             }
             org.json.JSONArray rest = new org.json.JSONArray();
             for (int i = n; i < all.length(); i++) rest.put(all.get(i));
@@ -452,6 +452,10 @@ public class ImportActivity extends Activity {
             Intent t = new Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.launch_url) + "#addnote=z" + b64), this, LauncherActivity.class);
             t.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(t);
+            if (rest.length() > 0) {   // la suite part toute seule, paquet par paquet
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(this::sendChunk, 3000);
+                return;
+            }
         } catch (Exception e) {
             toast("Les notes n'ont pas pu être envoyées");
         }
