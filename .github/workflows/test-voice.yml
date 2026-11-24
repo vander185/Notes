@@ -1,0 +1,15 @@
+name: test-voice
+on:
+  push:
+    paths: ['tools/test_voice.py', '.github/workflows/test-voice.yml']
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y -q espeak-ng >/dev/null && pip install -q vosk numpy
+      - run: |
+          curl -sSL -o m.zip https://alphacephei.com/vosk/models/vosk-model-small-fr-0.22.zip && unzip -q m.zip
+          curl -sSL -o s.zip https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip && unzip -q s.zip
+      - run: python tools/test_voice.py vosk-model-small-fr-0.22 vosk-model-spk-0.4 2>/dev/null
