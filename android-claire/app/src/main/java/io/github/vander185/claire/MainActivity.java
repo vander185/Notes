@@ -145,12 +145,13 @@ public class MainActivity extends Activity {
         }
         /* empreinte vocale */
         @JavascriptInterface public boolean voiceReady() { WakeService w = WakeService.instance; return w != null && w.voicePrint() != null; }
-        @JavascriptInterface public boolean voiceStored() { return WakeService.prefs(MainActivity.this).getString("voice", null) != null; }
+        @JavascriptInterface public boolean voiceStored() { return WakeService.prefs(MainActivity.this).getString("voice2", null) != null; }
         @JavascriptInterface public int enrollProgress() { return WakeService.prefs(MainActivity.this).getInt("enroll", -1); }
+        @JavascriptInterface public String enrollMessage() { return WakeService.prefs(MainActivity.this).getString("vmsg", ""); }
         @JavascriptInterface public int enrollTotal() { return WakeService.ENROLL_N; }
         @JavascriptInterface public boolean startEnroll() { WakeService w = WakeService.instance; if (w == null) return false; runOnUiThread(w::startEnroll); return true; }
         @JavascriptInterface public void cancelEnroll() { WakeService w = WakeService.instance; if (w != null) runOnUiThread(w::cancelEnroll); }
-        @JavascriptInterface public void clearVoice() { WakeService.prefs(MainActivity.this).edit().remove("voice").remove("vmin").putInt("enroll", -1).apply(); }
+        @JavascriptInterface public void clearVoice() { WakeService.prefs(MainActivity.this).edit().remove("voice").remove("voice2").remove("vmin").putInt("enroll", -1).apply(); }
         @JavascriptInterface public boolean isStrict() { return WakeService.prefs(MainActivity.this).getBoolean("strict", true); }
         @JavascriptInterface public void setStrict(boolean s) { WakeService.prefs(MainActivity.this).edit().putBoolean("strict", s).apply(); }
         @JavascriptInterface public void reminder(String id, double when, String text) {
