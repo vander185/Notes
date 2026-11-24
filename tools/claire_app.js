@@ -58,8 +58,13 @@ const clientTools = {
       let lat = 50.8503, lon = 4.3517, nom = 'Bruxelles';
       const v = (ville || '').trim();
       if (v && !/^bruxelles|brussel/i.test(v)) {
-        const g = await (await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&language=fr&name=' + encodeURIComponent(v))).json();
-        const r = g.results && g.results[0]; if (!r) return 'Erreur : ville introuvable (' + v + ').';
+        const [city, country] = v.split(',').map(s => s.trim());
+        const g = await (await fetch('https://geocoding-api.open-meteo.com/v1/search?count=10&language=fr&name=' + encodeURIComponent(city))).json();
+        const N = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        const L = (g.results || []).filter(r => !country || N(r.country).includes(N(country)));
+        // le nom exact d'abord (Tanger, pas Tangerang), puis la ville la plus peuplée
+        L.sort((a, b) => (N(b.name) === N(city)) - (N(a.name) === N(city)) || (b.population || 0) - (a.population || 0));
+        const r = L[0]; if (!r) return 'Erreur : ville introuvable (' + v + ').';
         lat = r.latitude; lon = r.longitude; nom = r.name + (r.country ? ', ' + r.country : '');
       }
       const u = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&timezone=auto&forecast_days=7'
