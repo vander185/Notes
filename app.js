@@ -826,7 +826,7 @@ function render() {
   g.innerHTML = L.map(it => {
     const sel = SEL && SEL.has(it.id) ? ' sel' : '';
     if (it.kind === 'note') { const p = (it.preview || '').split('\n'); return `<div class="cell${sel}" data-id="${it.id}"><div class="note"><b>${esc(it.name)}</b>${esc(p.slice(1).join('\n').trim().slice(0, 140))}</div></div>`; }
-    if (it.thumb) return `<div class="cell${sel}" data-id="${it.id}"><img src="${it.thumb}" alt="" loading="lazy">${it.kind === 'video' ? `<span class="vd">▶ ${it.dur ? dur(it.dur) : ''}</span>` : ''}</div>`;
+    if (it.thumb) return `<div class="cell${sel}" data-id="${it.id}"><img src="${it.thumb}" alt="" loading="lazy">${it.scan ? `<span class="scb">PDF · ${it.scan} p.</span>` : ''}${it.kind === 'video' ? `<span class="vd">▶ ${it.dur ? dur(it.dur) : ''}</span>` : ''}</div>`;
     return `<div class="cell${sel}" data-id="${it.id}"><div class="doc"><span>${it.kind === 'video' ? '🎬' : it.kind === 'photo' ? '🖼️' : docIcon(it.name, it.type)}</span>${esc(it.name)}<small style="color:#888">${size(it.size)}</small></div></div>`;
   }).join('');
 }
@@ -904,6 +904,7 @@ async function removeItem(it) {
 /* ---------- Ajout : appareil photo, caméra, galerie, documents, note ---------- */
 let addSrc = 'gal';
 $('#badd').onclick = () => sheet('Ajouter au coffre', [
+  { v: 'scan', ico: '🧾', cls: 'y', label: 'Scanner un document', sub: 'Bords auto, redressé, PDF multipage' },
   { v: 'cam', ico: '📷', cls: 'b', label: 'Prendre une photo', sub: 'Va directement dans le coffre, pas dans la Galerie' },
   { v: 'vid', ico: '🎥', cls: 'r', label: 'Filmer une vidéo', sub: 'Va directement dans le coffre' },
   ...(IS_ANDROID ? [{ v: 'gdel', ico: '🧹', cls: 'r', label: 'Importer et effacer de la galerie', sub: IS_APK ? 'Les originaux sont supprimés du téléphone' : 'Avec l’appli Android Notes (v2)' }] : []),
@@ -912,6 +913,7 @@ $('#badd').onclick = () => sheet('Ajouter au coffre', [
   { v: 'note', ico: '📝', cls: 'y', label: 'Écrire une note secrète', sub: 'Codes, adresses, infos privées' }
 ], v => {
   if (v === 'note') return setTimeout(newSecretNote, 50);
+  if (v === 'scan') return setTimeout(() => window.scanOpen && scanOpen(), 50);
   if (v === 'gdel') return galDel();
   const f = $('#fin'); f.value = ''; f.removeAttribute('capture'); addSrc = v;
   if (v === 'cam') { f.accept = 'image/*'; f.setAttribute('capture', 'environment'); f.multiple = false; }
@@ -1038,6 +1040,7 @@ async function openViewer(i, focus) {
       ta.oninput = () => { noteDirty = true; $('#vsave').classList.remove('hide'); };
       if (focus || !ta.value) setTimeout(() => ta.focus(), 80);
     }
+    else if (it.scan && window.scanView && await scanView(it, blob, vc)) { /* PDF scanné : pages affichées en images */ }
     else if (/pdf/.test(it.type)) vc.innerHTML = `<iframe src="${curUrl}"></iframe>`;
     else if (/^text\/|json|csv/.test(it.type) && it.size < 2e6) vc.innerHTML = `<pre>${esc(await blob.text())}</pre>`;
     else if (/^audio\//.test(it.type)) vc.innerHTML = `<audio src="${curUrl}" controls autoplay></audio>`;
