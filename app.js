@@ -280,14 +280,22 @@ function notesDraw() {
     const hasT = !!(n.title || '').trim(), t = hasT ? n.title.trim() : lines[0] || '', body = hasT ? lines : lines.slice(1), sub = body[0];
     const tag = n.src ? `<i>${n.src === 'Samsung Notes' ? 'Samsung' : 'Importée'}</i>` : '';
     const pjt = n.scans && n.scans.length ? `<i class="pjt">📄 ${n.scans.length > 1 ? n.scans.length + ' scans' : 'Scan'}</i>` : '';
-    html += `<button class="ni" data-id="${n.id}"><b${t ? '' : ' class="nt"'}><span>${esc(t || 'Sans titre')}</span>${pjt}${tag}</b>` +
-      `<p>${esc(body.slice(0, 8).join('\n').slice(0, 400))}</p>` +
-      `<small><em>${nDate(key(n))}</em>${esc(sub || 'Aucun texte supplémentaire')}</small><em class="cd">${nDate(key(n))}</em></button>`;
+    const cases = (n.txt || '').match(/^\s*[☐☑]/gm) || [], faites = (n.txt || '').match(/^\s*☑/gm) || [];
+    const meta = `<div class="nm"><em>${nDate(key(n))}</em>` + (DOSSIER === 'all' && n.folder ? `<span class="tg">📁 ${esc(n.folder)}</span>` : '') +
+      (cases.length ? `<span class="tg${faites.length === cases.length ? ' ok' : ''}">☑ ${faites.length}/${cases.length}</span>` : '') +
+      (n.scans && n.scans.length ? `<span class="tg">📄 PDF${n.scans.length > 1 ? ' ×' + n.scans.length : ''}</span>` : '') + '</div>';
+    const th = n.scans && n.scans[0] && n.scans[0].thumb;
+    const acts = DOSSIER === 'trash' ? '' : `<div class="sa"><button class="p" data-a="pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><use href="#i-pin"/></svg>${n.pin ? 'Désépingler' : 'Épingler'}</button><button class="m" data-a="move"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Dossier</button><button class="d" data-a="del"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Supprimer</button></div>`;
+    html += `<div class="sw" data-id="${n.id}">${acts}<button class="ni${th ? ' th' : ''}" data-id="${n.id}"><b${t ? '' : ' class="nt"'}><span>${esc(t || 'Sans titre')}</span>${pjt}${tag}</b>` +
+      `<p>${esc(body.slice(0, 8).join('\n').slice(0, 400))}</p>` + meta + (th ? `<img class="nth" src="${th}" alt="">` : '') +
+      `<small><em>${nDate(key(n))}</em>${esc(sub || 'Aucun texte supplémentaire')}</small><em class="cd">${nDate(key(n))}</em></button></div>`;
   });
   const el = $('#nlist'); el.className = 'v-' + nView;
   el.innerHTML = L.length ? html + '</div>' : `<p style="text-align:center;color:#8e8e93;margin-top:40px">${q ? 'Aucun résultat' : DOSSIER === 'trash' ? 'Aucune note supprimée.<br><small>Les notes supprimées restent ici 30 jours.</small>' : 'Aucune note'}</p>`;
   const nb = NOTES.filter(nDansDossier).length;
   $('#ncount').textContent = nb + (nb > 1 ? ' notes' : ' note');
+  $('#nsub').textContent = $('#ncount').textContent;
+  chipsDraw();
   $('#notes .nh h1').textContent = DOSSIER === 'all' ? 'Notes' : DOSSIER === 'trash' ? 'Récemment supprimées' : DOSSIER;
   $('#nnew').classList.toggle('hide', DOSSIER === 'trash'); $('#nscanl').classList.toggle('hide', DOSSIER === 'trash');
 }
@@ -396,6 +404,54 @@ function dossiersDraw() {
   $('#notes .ntop span').onclick = () => { dossiersDraw(); show('nfold'); };
   $('#fdl').onclick = e => { const b = e.target.closest('.fd'); if (!b) return; DOSSIER = b.dataset.d; $('#nsearch').value = ''; notesDraw(); show('notes'); };
   $('#fdnew').onclick = async () => { const d = await nouveauDossier(); if (d) { dossiersDraw(); toast('Dossier « ' + d + ' » créé'); } };
+})();
+/* ---------- Puces de dossiers et glisser pour agir ---------- */
+function chipsDraw() {
+  const el = $('#nchips'); if (!el) return;
+  const actives = NOTES.filter(n => !n.del), nbDel = NOTES.filter(n => n.del).length;
+  const c = (v, nom, n) => `<button data-d="${esc(v)}" class="${DOSSIER === v ? 'on' : ''}">${nom}${n !== undefined ? ` <i>${n}</i>` : ''}</button>`;
+  el.innerHTML = c('all', 'Toutes', actives.length) + DOSSIERS.map(d => c(d, esc(d), actives.filter(n => n.folder === d).length)).join('') +
+    `<button class="add" data-d="+" aria-label="Nouveau dossier">＋</button>` +
+    (nbDel || DOSSIER === 'trash' ? c('trash', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Supprimées', nbDel) : '');
+  const on = el.querySelector('.on'); if (on && on.scrollIntoView) on.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+}
+$('#nchips').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.d === '+') { const d = await nouveauDossier(); if (d) { DOSSIER = d; notesDraw(); toast('Dossier « ' + d + ' » créé'); } return; }
+  DOSSIER = b.dataset.d; notesDraw(); $('#nlist').scrollTop = 0;
+});
+(() => {   // glisser une note vers la gauche : épingler, ranger, supprimer
+  const L = $('#nlist'); let el = null, x0 = 0, y0 = 0, dx = 0, actif = false, ouvert = null;
+  const W = 216, fermer = () => { if (ouvert) { ouvert.style.transform = ''; ouvert = null; } };
+  L.addEventListener('pointerdown', e => {
+    const b = e.target.closest('.ni'); if (!b || !L.classList.contains('v-list') || DOSSIER === 'trash' || e.pointerType === 'mouse' && e.button) return;
+    if (ouvert && ouvert !== b) fermer();
+    el = b; x0 = e.clientX; y0 = e.clientY; dx = 0; actif = false;
+  });
+  L.addEventListener('pointermove', e => {
+    if (!el) return; const mx = e.clientX - x0, my = e.clientY - y0;
+    if (!actif) { if (Math.abs(mx) > 12 && Math.abs(mx) > Math.abs(my) * 1.4) { actif = true; el.style.transition = 'none'; } else if (Math.abs(my) > 10) { el = null; return; } else return; }
+    dx = Math.min(0, Math.max(-W - 30, mx + (ouvert === el ? -W : 0))); el.style.transform = `translateX(${dx}px)`;
+  });
+  const fin = () => {
+    if (!el) return; const b = el; el = null; b.style.transition = '';
+    if (!actif) return; b._glisse = Date.now();
+    if (dx < -70) { b.style.transform = `translateX(${-W}px)`; ouvert = b; try { navigator.vibrate && navigator.vibrate(6); } catch (e) {} } else { b.style.transform = ''; if (ouvert === b) ouvert = null; }
+  };
+  L.addEventListener('pointerup', fin); L.addEventListener('pointercancel', fin);
+  L.addEventListener('click', async e => {
+    const a = e.target.closest('.sa button');
+    if (a) {
+      e.stopPropagation(); const n = NOTES.find(x => x.id === a.closest('.sw').dataset.id); fermer(); if (!n) return;
+      if (a.dataset.a === 'pin') { n.pin = !n.pin; await nSave(); notesDraw(); toast(n.pin ? 'Note épinglée' : 'Note désépinglée'); }
+      if (a.dataset.a === 'move') { const d = await choisirDossier(n.folder); if (d !== null) { if (d) n.folder = d; else delete n.folder; await nSave(); notesDraw(); toast(d ? 'Rangée dans « ' + d + ' »' : 'Sortie du dossier'); } }
+      if (a.dataset.a === 'del') { n.del = Date.now(); n.pin = false; await nSave(); notesDraw(); toast('Note mise dans « Supprimées »'); }
+      return;
+    }
+    const b = e.target.closest('.ni');
+    if (b && b._glisse && Date.now() - b._glisse < 500) { e.stopImmediatePropagation(); return; }   // fin du glissé : ce n'est pas un toucher
+    if (b && ouvert) { e.stopImmediatePropagation(); fermer(); }
+  }, true);
 })();
 /* ---------- Listes à cocher, scans joints, barre d'outils de la note ---------- */
 const CK = /^(\s*)([☐☑])\s?/;

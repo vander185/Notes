@@ -58,6 +58,59 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stro
 #npv .h b{color:#fff;font-size:15px;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #npv .p{flex:1;overflow:auto;padding:0 10px 30px;display:flex;flex-direction:column;gap:10px}#npv .p img{width:100%;border-radius:4px;background:#fff}
 #nedit{background:#000;z-index:5}
+/* ---------- Bloc-notes : finitions (élégant, pratique, ergonomique) ---------- */
+#notes,#nedit,#nfold{background:radial-gradient(120% 60% at 50% -10%,#1a1710 0%,#000 55%)}
+#notes .nh h1{margin:2px 0 0}
+#nsub{margin:0 0 12px;color:#8e8e93;font-size:14px}
+#nsearch{height:42px;border-radius:13px;background-color:#1a1a1d;border:1px solid #ffffff0d;transition:border-color .2s}
+#nsearch:focus{border-color:#e5b40066}
+#nchips{display:flex;gap:8px;overflow-x:auto;padding:12px 16px 2px;scrollbar-width:none;flex:none}#nchips::-webkit-scrollbar{display:none}
+#nchips button{flex:none;display:flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:99px;background:#1a1a1d;border:1px solid #ffffff12;color:#d8d8dc;font-size:14px;font-weight:600;transition:background .2s,color .2s}
+#nchips button.on{background:#e5b400;border-color:#e5b400;color:#1a1400}
+#nchips button i{font-style:normal;font-weight:500;opacity:.6;font-size:12.5px}
+#nchips button.add{padding:0 12px;color:#e5b400;font-size:18px;font-weight:400}
+#nchips svg{width:15px;height:15px}
+#nlist{margin:6px 16px 0;padding-bottom:130px}
+#nlist h5{margin:20px 6px 8px;font-size:13px;font-weight:600;color:#8e8e93;text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px}
+#nlist h5 svg.pi{width:14px;height:14px;color:#e5b400}
+#nlist .ng{background:#141416;border:1px solid #ffffff0d;border-radius:16px}
+#nlist.v-list .ni{padding:13px 16px 12px;background:#141416;transition:transform .25s var(--ease);touch-action:pan-y;position:relative;z-index:1}
+#nlist.v-list .ni.th{padding-right:76px}
+#nlist.v-list .ni p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-line;margin:3px 0 7px;color:#a1a1a6;font-size:14.5px;line-height:1.35}
+#nlist.v-list .ni p:empty{display:none}
+#nlist.v-list .ni small{display:none}
+.nm{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:12.5px;color:#8e8e93}
+.nm em{font-style:normal;color:#c9a227;font-weight:600}
+.nm .tg{padding:2px 8px;border-radius:99px;background:#ffffff0f;color:#c7c7cc;font-size:11.5px;font-weight:600}
+.nm .tg.ok{background:#34d07a1f;color:#6fe3a2}
+#nlist.v-grid .nm,#nlist.v-compact .nm{display:none}
+.nth{position:absolute;right:14px;top:50%;transform:translateY(-50%);width:48px;height:60px;object-fit:cover;object-position:top;border-radius:7px;background:#fff;box-shadow:0 2px 10px #0008}
+#nlist:not(.v-list) .nth{display:none}
+#nlist b i.pjt{display:none}
+.sw{position:relative;overflow:hidden}
+.sw+.sw:before{content:'';position:absolute;top:0;left:16px;right:0;height:1px;background:#ffffff14;z-index:2}
+#nlist .ni+.ni:before{display:none}
+.sa{position:absolute;inset:0 0 0 auto;display:flex}
+.sa button{width:72px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#fff;font-size:11.5px;font-weight:600}
+.sa button svg{width:20px;height:20px}
+.sa .p{background:#ff9f0a}.sa .m{background:#5e5ce6}.sa .d{background:#ff453a}
+#nlist:not(.v-list) .sa{display:none}#nlist.v-grid .sw{display:contents}#nlist.v-grid .sw:before{display:none}
+.nfoot{z-index:10;justify-content:center!important;background:none;border:0;backdrop-filter:none;-webkit-backdrop-filter:none;pointer-events:none;padding-bottom:calc(16px + env(safe-area-inset-bottom))}
+.nfoot .nfab{margin:0 auto;pointer-events:auto;display:flex;gap:6px;padding:6px;border-radius:99px;background:#1c1c1fe6;border:1px solid #ffffff14;box-shadow:0 10px 30px #000a;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.nfoot .nfab button{position:static;display:flex;align-items:center;gap:8px;height:46px;padding:0 18px;border-radius:99px;font-size:15px;font-weight:600;color:#e5b400}
+.nfoot .nfab button svg,.nfoot .nfab svg.i{width:21px;height:21px}
+.nfoot .nfab #nnew{background:linear-gradient(135deg,#f5c518,#e5a300);color:#1a1400;box-shadow:0 4px 14px #e5b40055}
+.nfoot .nfab button:active{transform:scale(.96)}
+#nedit .eh button{min-width:36px;min-height:36px;justify-content:center}
+#nedit .nst{display:none}
+.etb{left:50%;right:auto;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));padding:6px;gap:4px;border-radius:99px;border:1px solid #ffffff14;background:#1c1c1fe6;box-shadow:0 10px 30px #000a;justify-content:center}
+.etb button.lb{width:auto;height:44px;padding:0 15px;display:flex;gap:7px;border-radius:99px;font-size:14px;font-weight:600}
+.etb button.lb:active{background:#ffffff12}
+.etb svg{width:21px!important;height:21px!important}
+.npj button{background:#141416;border-radius:14px}
+#nedit textarea{background:transparent!important}
+#fdl .ng{background:#141416;border:1px solid #ffffff0d;border-radius:16px}
+
 #nedit .eh{display:flex;align-items:center;justify-content:space-between;padding:calc(12px + env(safe-area-inset-top)) 12px 6px;color:#e5b400;font-size:17px}
 #nedit .eh button{color:#e5b400;display:flex;align-items:center;gap:2px}
 #nedit textarea{flex:1;background:#000;color:#fff;border:0;outline:none;resize:none;padding:8px 18px 40px;font:17px/1.45 -apple-system,system-ui,sans-serif}
@@ -292,9 +345,10 @@ button.it:active{background:#ffffff0b}
 <section id="notes" class="scr">
   <div class="ntop"><span><svg class="i"><use href="#i-left"/></svg>Dossiers</span><button id="nmore" aria-label="Plus" style="color:inherit;display:flex"><svg class="i"><use href="#i-more"/></svg></button></div>
   <input type="file" id="nin" accept=".sdocx,.txt,.md,.docx,application/octet-stream,application/zip,.html,.htm,text/plain,text/markdown,text/html,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
-  <div class="nh"><h1>Notes</h1><input id="nsearch" type="search" placeholder="Rechercher" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
+  <div class="nh"><h1>Notes</h1><p id="nsub"></p><input id="nsearch" type="search" placeholder="Rechercher" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
+  <div id="nchips"></div>
   <div id="nlist"></div>
-  <div class="nfoot"><span id="ncount"></span><button id="nscanl" class="l" aria-label="Scanner un document"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/></svg></button><button id="nnew" aria-label="Nouvelle note"><svg class="i"><use href="#i-compose"/></svg></button></div>
+  <div class="nfoot"><span id="ncount" class="hide"></span><div class="nfab"><button id="nscanl" class="l" aria-label="Scanner un document"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/></svg><span>Scanner</span></button><button id="nnew" aria-label="Nouvelle note"><svg class="i"><use href="#i-compose"/></svg><span>Nouvelle note</span></button></div></div>
 </section>
 <section id="nedit" class="scr">
   <div class="eh"><button id="nback"><svg class="i"><use href="#i-left"/></svg>Notes</button><div class="ea"><button id="npin" aria-label="Épingler"><svg class="i"><use href="#i-pin"/></svg></button><button id="nshare" aria-label="Partager"><svg class="i"><use href="#i-share"/></svg></button><button id="nmenu" aria-label="Plus d'options"><svg class="i"><use href="#i-more"/></svg></button><button id="ndone" class="ok hide">OK</button><button id="ndel" hidden></button></div></div>
@@ -303,7 +357,7 @@ button.it:active{background:#ffffff0b}
   <div id="npj" class="npj hide"></div>
   <textarea id="ntext" placeholder="Écrivez votre note…"></textarea>
   <div class="nst" id="nstat"></div>
-  <div class="etb"><button id="nchk" aria-label="Liste à cocher"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="6" height="6" rx="1.5"/><path d="m4.5 7 1.2 1.2L7.8 6M13 7h8M3 15h6v6H3zM13 18h8"/></svg></button><button id="nscan" aria-label="Scanner un document"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/></svg></button><button id="nnew2" aria-label="Nouvelle note"><svg class="i"><use href="#i-compose"/></svg></button></div>
+  <div class="etb"><button id="nchk" aria-label="Liste à cocher" class="lb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="6" height="6" rx="1.5"/><path d="m4.5 7 1.2 1.2L7.8 6M13 7h8M3 15h6v6H3zM13 18h8"/></svg><span>Cases</span></button><button id="nscan" aria-label="Scanner un document" class="lb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/></svg><span>Scanner</span></button><button id="nnew2" aria-label="Nouvelle note" class="lb"><svg class="i"><use href="#i-compose"/></svg><span>Nouvelle</span></button></div>
 </section>
 
 <!-- 2. Verrou classique -->
