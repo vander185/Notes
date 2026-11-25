@@ -212,7 +212,7 @@ async function tryUnlock(pin, how = 'code') {
 }
 
 /* ---------- Bloc-notes (vrai bloc-notes + porte secrète) ---------- */
-let NOTES = [], curNote = null, nT;
+let NOTES = [], curNote = null, nT, DOSSIER = 'all', DOSSIERS = [];
 const SEED = [
   { t: 'Courses', txt: 'Courses\n- lait\n- pain\n- œufs\n- tomates\n- riz', upd: Date.now() - 86400000 * 2 },
   { t: 'Idées', txt: 'Idées\nAppeler le garage pour le contrôle\nRéserver le resto samedi', upd: Date.now() - 86400000 * 9 }
@@ -249,6 +249,7 @@ function noteMig(n) {
   return true;
 }
 const nFull = n => ((n.title || '') + '\n' + (n.txt || '')).trim();
+const nVide = n => !nFull(n) && !(n.scans && n.scans.length);
 async function notesLoad() {
   NOTES = (await mget('notes')) || null;
   if (!NOTES) { NOTES = SEED.map((n, i) => ({ id: 'n' + i, ...n })); await mset('notes', NOTES); return; }
@@ -256,6 +257,9 @@ async function notesLoad() {
   const seen = new Set(), before = NOTES.length;   // doublons d'import
   NOTES = NOTES.filter(n => !n.src || !nFull(n) || (seen.has(nFull(n)) ? false : (seen.add(nFull(n)), true)));
   if (ch || NOTES.length !== before) await mset('notes', NOTES);
+  DOSSIERS = (await mget('nfolders')) || [];
+  const vieux = NOTES.filter(n => n.del && Date.now() - n.del > 30 * 864e5);   // corbeille : 30 jours
+  if (vieux.length) { NOTES = NOTES.filter(n => !vieux.includes(n)); for (const n of vieux) pjSuppr(n.scans); await mset('notes', NOTES); }
 }
 const nSave = () => mset('notes', NOTES);
 const nDate = t => { const d = new Date(t), now = new Date(); return d.toDateString() === now.toDateString() ? d.toLocaleTimeString('fr-BE', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('fr-BE', { day: '2-digit', month: '2-digit', year: '2-digit' }); };
@@ -265,7 +269,7 @@ function notesDraw() {
   const q = $('#nsearch').value.trim().toLowerCase();
   const key = n => nSort === 'cre' ? (n.cre || n.upd) : n.upd;
   const ttl = n => ((n.title || '').trim() || (n.txt || '').split('\n').find(x => x.trim()) || '').trim();
-  const L = NOTES.filter(n => !q || nFull(n).toLowerCase().includes(q))
+  const L = NOTES.filter(n => nDansDossier(n) && (!q || nFull(n).toLowerCase().includes(q)))
     .sort((a, b) => (b.pin ? 1 : 0) - (a.pin ? 1 : 0) || (nSort === 'az' ? ttl(a).localeCompare(ttl(b), 'fr', { sensitivity: 'base' }) : key(b) - key(a)));
   const day = new Date(); day.setHours(0, 0, 0, 0); const d0 = day.getTime(), D = 86400000;
   const grp = n => n.pin ? '📌' : nSort === 'az' ? 'Toutes les notes' : key(n) >= d0 ? "Aujourd'hui" : key(n) >= d0 - D ? 'Hier' : key(n) >= d0 - 7 * D ? '7 jours précédents' : key(n) >= d0 - 30 * D ? '30 jours précédents' : String(new Date(key(n)).getFullYear());
@@ -275,25 +279,40 @@ function notesDraw() {
     const lines = (n.txt || '').split('\n').filter(x => x.trim());
     const hasT = !!(n.title || '').trim(), t = hasT ? n.title.trim() : lines[0] || '', body = hasT ? lines : lines.slice(1), sub = body[0];
     const tag = n.src ? `<i>${n.src === 'Samsung Notes' ? 'Samsung' : 'Importée'}</i>` : '';
-    html += `<button class="ni" data-id="${n.id}"><b${t ? '' : ' class="nt"'}><span>${esc(t || 'Sans titre')}</span>${tag}</b>` +
+    const pjt = n.scans && n.scans.length ? `<i class="pjt">📄 ${n.scans.length > 1 ? n.scans.length + ' scans' : 'Scan'}</i>` : '';
+    html += `<button class="ni" data-id="${n.id}"><b${t ? '' : ' class="nt"'}><span>${esc(t || 'Sans titre')}</span>${pjt}${tag}</b>` +
       `<p>${esc(body.slice(0, 8).join('\n').slice(0, 400))}</p>` +
       `<small><em>${nDate(key(n))}</em>${esc(sub || 'Aucun texte supplémentaire')}</small><em class="cd">${nDate(key(n))}</em></button>`;
   });
   const el = $('#nlist'); el.className = 'v-' + nView;
-  el.innerHTML = L.length ? html + '</div>' : `<p style="text-align:center;color:#8e8e93;margin-top:40px">${q ? 'Aucun résultat' : 'Aucune note'}</p>`;
-  $('#ncount').textContent = NOTES.length + (NOTES.length > 1 ? ' notes' : ' note');
+  el.innerHTML = L.length ? html + '</div>' : `<p style="text-align:center;color:#8e8e93;margin-top:40px">${q ? 'Aucun résultat' : DOSSIER === 'trash' ? 'Aucune note supprimée.<br><small>Les notes supprimées restent ici 30 jours.</small>' : 'Aucune note'}</p>`;
+  const nb = NOTES.filter(nDansDossier).length;
+  $('#ncount').textContent = nb + (nb > 1 ? ' notes' : ' note');
+  $('#notes .nh h1').textContent = DOSSIER === 'all' ? 'Notes' : DOSSIER === 'trash' ? 'Récemment supprimées' : DOSSIER;
+  $('#nnew').classList.toggle('hide', DOSSIER === 'trash'); $('#nscanl').classList.toggle('hide', DOSSIER === 'trash');
 }
-async function notesOpen() { await notesLoad(); $('#nsearch').value = ''; notesDraw(); show('notes'); }
+async function notesOpen() { await notesLoad(); DOSSIER = 'all'; $('#nsearch').value = ''; notesDraw(); show('notes'); }
 function noteEdit(n) {
   const fmt = x => new Date(x).toLocaleString('fr-BE', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   noteMig(n); curNote = n; $('#ntitle').value = n.title || ''; $('#ntext').value = n.txt; $('#ndate').textContent = fmt(n.upd);
   $('#npin').classList.toggle('on', !!n.pin); nStat();
   const s = $('#nsrc'); s.classList.toggle('hide', !n.src);
   if (n.src) s.textContent = (n.src === 'Samsung Notes' ? 'Importée de Samsung Notes' : 'Note importée') + (n.cre ? ' · créée le ' + new Date(n.cre).toLocaleDateString('fr-BE', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+  pjDraw();
   show('nedit'); if (!n.txt && !n.title) setTimeout(() => $('#ntitle').focus(), 80);
 }
-$('#nlist').addEventListener('click', e => { const b = e.target.closest('.ni'); if (b) noteEdit(NOTES.find(n => n.id === b.dataset.id)); });
-$('#nnew').onclick = () => { const n = { id: 'n' + Date.now().toString(36), title: '', txt: '', upd: Date.now() }; NOTES.push(n); noteEdit(n); };
+$('#nlist').addEventListener('click', async e => {
+  const b = e.target.closest('.ni'); if (!b) return; const n = NOTES.find(x => x.id === b.dataset.id); if (!n) return;
+  if (!n.del) return noteEdit(n);
+  const j = Math.max(1, 30 - Math.floor((Date.now() - n.del) / 864e5));
+  const v = await sheet((n.title || 'Note supprimée') + ` · encore ${j} jour${j > 1 ? 's' : ''}`, [
+    { v: 'back', ico: '↩️', cls: 'g', label: 'Récupérer la note', sub: n.folder ? 'Retourne dans « ' + n.folder + ' »' : 'Retourne dans Notes' },
+    { v: 'kill', ico: '🗑️', dg: 1, label: 'Supprimer définitivement' }
+  ]);
+  if (v === 'back') { delete n.del; await nSave(); notesDraw(); toast('Note récupérée'); }
+  if (v === 'kill' && await sheet('Supprimer pour toujours ?', [{ v: 'ok', dg: 1, label: 'Supprimer définitivement' }]) === 'ok') { NOTES = NOTES.filter(x => x !== n); await pjSuppr(n.scans); await nSave(); notesDraw(); }
+});
+$('#nnew').onclick = () => { const n = { id: 'n' + Date.now().toString(36), title: '', txt: '', upd: Date.now() }; if (DOSSIER !== 'all' && DOSSIER !== 'trash') n.folder = DOSSIER; NOTES.push(n); noteEdit(n); };
 function nStat() {   // nombre de mots, discret en bas
   const w = ((curNote && nFull(curNote)) || '').split(/\s+/).filter(Boolean).length;
   $('#nstat').textContent = w ? `${w} mot${w > 1 ? 's' : ''}` : '';
@@ -302,22 +321,26 @@ function nChanged() { if (!curNote) return; curNote.title = $('#ntitle').value; 
 $('#ntext').addEventListener('input', nChanged);
 $('#ntitle').addEventListener('input', nChanged);
 $('#ntitle').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const a = $('#ntext'); a.focus(); a.setSelectionRange(0, 0); } });
-$('#nback').onclick = async () => { if (curNote && !nFull(curNote)) NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave(); };
+$('#nback').onclick = async () => { if (curNote && nVide(curNote)) NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave(); };
 $('#npin').onclick = async () => { if (!curNote) return; curNote.pin = !curNote.pin; $('#npin').classList.toggle('on', curNote.pin); toast(curNote.pin ? 'Note épinglée en haut de la liste' : 'Note désépinglée'); await nSave(); };
 $('#nmenu').onclick = async () => {
   if (!curNote) return;
   const v = await sheet('Note', [
     { v: 'copy', ico: '📋', label: 'Copier le texte' },
     { v: 'dup', ico: '🗐', label: 'Dupliquer la note' },
+    { v: 'move', ico: '📁', label: 'Déplacer vers un dossier', sub: curNote.folder ? 'Actuellement : ' + curNote.folder : 'Actuellement : aucun dossier' },
     { v: 'del', ico: '🗑️', dg: 1, label: 'Supprimer la note' }
   ]);
   if (v === 'copy') { try { await navigator.clipboard.writeText(nFull(curNote)); toast('Texte copié'); } catch (e) { toast('Copie impossible'); } }
-  if (v === 'dup') { const c = { ...curNote, id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), title: (curNote.title || 'Sans titre') + ' (copie)', upd: Date.now(), pin: false }; NOTES.push(c); await nSave(); noteEdit(c); toast('Note dupliquée'); }
+  if (v === 'dup') { const c = { ...curNote, id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), title: (curNote.title || 'Sans titre') + ' (copie)', upd: Date.now(), pin: false }; if (c.scans) { c.scans = []; for (const p of curNote.scans) { const nid = 'ns' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), b = await mget('nscan:' + p.id); if (b) { await mset('nscan:' + nid, b); c.scans.push({ ...p, id: nid }); } } } NOTES.push(c); await nSave(); noteEdit(c); toast('Note dupliquée'); }
+  if (v === 'move') { const d = await choisirDossier(curNote.folder); if (d !== null) { if (d) curNote.folder = d; else delete curNote.folder; await nSave(); toast(d ? 'Note rangée dans « ' + d + ' »' : 'Note sortie du dossier'); } }
   if (v === 'del') $('#ndel').click();
 };
 $('#ndel').onclick = async () => {
-  if (curNote && nFull(curNote) && await sheet('Supprimer cette note ?', [{ v: 'del', dg: 1, label: 'Supprimer définitivement' }]) !== 'del') return;
-  NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave();
+  if (!curNote) return;
+  if (nVide(curNote)) { NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave(); return; }
+  const n = curNote; n.del = Date.now(); n.pin = false; curNote = null; notesDraw(); show('notes'); await nSave();
+  toast('Note mise dans « Récemment supprimées »', 2400);
 };
 $('#nshare').onclick = async () => {
   const txt = curNote ? nFull(curNote) : ''; if (!txt) return;
@@ -330,6 +353,115 @@ $('#nshare').onclick = async () => {
   $(s).addEventListener('blur', () => setTimeout(() => { if ([$('#ntext'), $('#ntitle')].includes(document.activeElement)) return; $('#ndone').classList.add('hide'); ['#nshare', '#npin', '#nmenu'].forEach(x => $(x).classList.remove('hide')); }, 50));
 });
 $('#ndone').addEventListener('pointerdown', e => { e.preventDefault(); document.activeElement.blur(); });
+/* ---------- Dossiers et « Récemment supprimées » ---------- */
+const nDansDossier = n => DOSSIER === 'trash' ? !!n.del : !n.del && (DOSSIER === 'all' || n.folder === DOSSIER);
+async function choisirDossier(actuel) {
+  const v = await sheet('Déplacer vers…', [
+    { v: '__aucun', ico: '🗒️', label: 'Notes (aucun dossier)' + (!actuel ? ' ✓' : '') },
+    ...DOSSIERS.map(d => ({ v: d, ico: '📁', label: d + (d === actuel ? ' ✓' : '') })),
+    { v: '__nouveau', ico: '➕', cls: 'y', label: 'Nouveau dossier…' }
+  ]);
+  if (!v) return null;
+  if (v === '__aucun') return '';
+  if (v === '__nouveau') { const d = await nouveauDossier(); return d || null; }
+  return v;
+}
+async function nouveauDossier() {
+  let t = await ask({ title: 'Nouveau dossier', input: '', ph: 'Nom du dossier', ok: 'Créer' }); t = (t || '').trim().slice(0, 40);
+  if (!t) return '';
+  if (!DOSSIERS.includes(t)) { DOSSIERS.push(t); await mset('nfolders', DOSSIERS); }
+  return t;
+}
+function dossiersDraw() {
+  const actives = NOTES.filter(n => !n.del), cnt = d => actives.filter(n => n.folder === d).length, nb = NOTES.filter(n => n.del).length;
+  const ligne = (v, ico, nom, c) => `<button class="fd" data-d="${esc(v)}"><span class="fi">${ico}</span><span class="fn">${esc(nom)}</span><span class="fc">${c}</span><svg class="i"><use href="#i-right"/></svg></button>`;
+  const F = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+  const T = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
+  $('#fdl').innerHTML = `<div class="ng">${ligne('all', F, 'Notes', actives.length)}${DOSSIERS.map(d => ligne(d, F, d, cnt(d))).join('')}</div>` +
+    `<div class="ng" style="margin-top:22px">${ligne('trash', T, 'Récemment supprimées', nb)}</div>`;
+}
+(() => {
+  const sec = document.createElement('section'); sec.id = 'nfold'; sec.className = 'scr';
+  sec.innerHTML = `<div class="ntop"><span></span><button id="fdnew" style="color:inherit;font-size:17px">Nouveau dossier</button></div><div class="nh"><h1>Dossiers</h1></div><div id="fdl"></div>`;
+  $('#notes').after(sec);
+  const st = document.createElement('style');
+  st.textContent = `#nfold{background:#000;flex-direction:column}#nfold .ntop{display:flex;justify-content:flex-end;padding:calc(10px + env(safe-area-inset-top)) 16px 0;color:#e5b400;min-height:30px}
+#nfold .nh{padding:2px 16px 6px}#nfold h1{font-size:34px;margin:4px 0 14px;font-weight:700;letter-spacing:-.02em}
+#fdl{margin:0 16px;overflow-y:auto}#fdl .ng{background:#1c1c1e;border-radius:12px;overflow:hidden}
+.fd{display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;color:#fff;text-align:left;position:relative;font-size:17px}
+.fd+.fd:before{content:'';position:absolute;top:0;left:52px;right:0;height:1px;background:#ffffff17}.fd:active{background:#2c2c2e}
+.fd .fi{color:#e5b400;display:grid}.fd .fi svg{width:24px;height:24px}.fd .fn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fd .fc{color:#8e8e93}.fd svg.i{width:16px;height:16px;color:#5a5a5e}
+#notes .ntop span{cursor:pointer}`;
+  document.head.appendChild(st);
+  $('#notes .ntop span').onclick = () => { dossiersDraw(); show('nfold'); };
+  $('#fdl').onclick = e => { const b = e.target.closest('.fd'); if (!b) return; DOSSIER = b.dataset.d; $('#nsearch').value = ''; notesDraw(); show('notes'); };
+  $('#fdnew').onclick = async () => { const d = await nouveauDossier(); if (d) { dossiersDraw(); toast('Dossier « ' + d + ' » créé'); } };
+})();
+/* ---------- Listes à cocher, scans joints, barre d'outils de la note ---------- */
+const CK = /^(\s*)([☐☑])\s?/;
+function nLigne(t, p) { const a = t.lastIndexOf('\n', p - 1) + 1, b = t.indexOf('\n', p); return [a, b < 0 ? t.length : b]; }
+function nSet(v, a, b) { const x = $('#ntext'); x.value = v; x.setSelectionRange(a, b ?? a); nChanged(); }
+$('#nchk').addEventListener('pointerdown', e => e.preventDefault());   // garde le clavier ouvert
+$('#nchk').onclick = () => {
+  const x = $('#ntext'), t = x.value, s0 = x.selectionStart, s1 = x.selectionEnd;
+  const [a] = nLigne(t, s0), [, b] = nLigne(t, s1), L = t.slice(a, b).split('\n');
+  const tous = L.every(l => CK.test(l) || !l.trim());
+  const N = L.map(l => tous ? l.replace(CK, '$1') : (CK.test(l) ? l : l.replace(/^(\s*)/, '$1☐ ')));
+  const v = t.slice(0, a) + N.join('\n') + t.slice(b), d = v.length - t.length;
+  if (document.activeElement !== x) x.focus();
+  nSet(v, Math.max(a, s1 + d));
+};
+$('#ntext').addEventListener('click', () => {   // toucher la case : cochée / décochée
+  const x = $('#ntext'); if (x.selectionStart !== x.selectionEnd) return;
+  const t = x.value, p = x.selectionStart, [a] = nLigne(t, p), m = t.slice(a).match(CK);
+  if (!m || p - a > m[0].length) return;
+  const i = a + m[1].length, v = t.slice(0, i) + (t[i] === '☐' ? '☑' : '☐') + t.slice(i + 1);
+  nSet(v, a + m[0].length + (t.slice(a + m[0].length, nLigne(t, p)[1]).length));
+  try { navigator.vibrate && navigator.vibrate(8); } catch (e) {}
+});
+$('#ntext').addEventListener('keydown', e => {   // Entrée : nouvelle case ; sur une case vide : fin de la liste
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+  const x = $('#ntext'), t = x.value, p = x.selectionStart, [a] = nLigne(t, p), m = t.slice(a, p).match(CK);
+  if (!m) return;
+  e.preventDefault();
+  const [, b] = nLigne(t, p);
+  if (!t.slice(a + m[0].length, b).trim()) { nSet(t.slice(0, a) + t.slice(b), a); return; }
+  const ins = '\n' + m[1] + '☐ '; nSet(t.slice(0, p) + ins + t.slice(x.selectionEnd), p + ins.length);
+});
+const oct = n => n < 1048576 ? Math.max(1, Math.round(n / 1024)) + ' Ko' : (n / 1048576).toFixed(1).replace('.', ',') + ' Mo';
+function pjDraw() {
+  const el = $('#npj'), L = (curNote && curNote.scans) || [];
+  el.classList.toggle('hide', !L.length);
+  el.innerHTML = L.map(p => `<button data-pj="${p.id}"><img src="${p.thumb}" alt=""><span><b>${esc(p.name)}</b><small>PDF · ${p.pages} page${p.pages > 1 ? 's' : ''} · ${oct(p.size)}</small></span></button>`).join('');
+}
+async function pjSuppr(L) { for (const p of L || []) { try { await tx('meta', 'readwrite', s => s.delete('nscan:' + p.id)); } catch (e) {} } }
+$('#npj').addEventListener('click', async e => {
+  const b = e.target.closest('[data-pj]'); if (!b || !curNote) return;
+  const p = curNote.scans.find(x => x.id === b.dataset.pj); if (!p) return;
+  const v = await sheet(p.name, [
+    { v: 'voir', ico: '👁', label: 'Voir le document' },
+    { v: 'share', ico: '📤', label: 'Partager le PDF', sub: 'WhatsApp, e-mail, Drive…' },
+    { v: 'del', ico: '🗑️', dg: 1, label: 'Retirer de la note' }
+  ]);
+  const buf = v && v !== 'del' ? await mget('nscan:' + p.id) : null;
+  if ((v === 'voir' || v === 'share') && !buf) { toast('Document introuvable'); return; }
+  if (v === 'share') await window.scanPartager(new Uint8Array(buf), p.name, 'application/pdf');
+  if (v === 'voir') {
+    const imgs = window.SCANCORE.pdfImages(buf), urls = imgs.map(x => URL.createObjectURL(new Blob([x], { type: 'image/jpeg' })));
+    const d = document.createElement('div'); d.id = 'npv';
+    d.innerHTML = `<div class="h"><button id="npvx">Fermer</button><b>${esc(p.name)}</b><button id="npvs">Partager</button></div><div class="p">${urls.map((u, i) => `<img src="${u}" alt="Page ${i + 1}">`).join('')}</div>`;
+    document.body.appendChild(d);
+    const fin = () => { d.remove(); urls.forEach(u => URL.revokeObjectURL(u)); };
+    d.querySelector('#npvx').onclick = fin;
+    d.querySelector('#npvs').onclick = () => window.scanPartager(new Uint8Array(buf), p.name, 'application/pdf');
+  }
+  if (v === 'del' && await sheet('Retirer ce scan de la note ?', [{ v: 'ok', dg: 1, label: 'Retirer le scan' }]) === 'ok') {
+    curNote.scans = curNote.scans.filter(x => x !== p); await pjSuppr([p]); curNote.upd = Date.now(); await nSave(); pjDraw(); toast('Scan retiré');
+  }
+});
+$('#nscan').onclick = () => { document.activeElement && document.activeElement.blur && document.activeElement.blur(); window.scanOpen && scanOpen('note'); };
+$('#nscanl').onclick = () => { curNote = null; window.scanOpen && scanOpen('note'); };
+$('#nnew2').onclick = async () => { if (curNote && nVide(curNote)) return; await nSave(); $('#nnew').click(); };
 function noteFlash(id) { requestAnimationFrame(() => { const b = $('#nlist').querySelector(`[data-id="${id}"]`); if (b) { b.classList.add('flash'); b.scrollIntoView({ block: 'center', behavior: 'smooth' }); } }); }
 /* ---------- Lecture des notes importées (Samsung Notes : « Fichier texte » ou « Word ») ---------- */
 async function zipEntry(buf, want) {   // lit un fichier dans un .docx (zip), sans bibliothèque
@@ -485,8 +617,13 @@ $('#nmore').onclick = async () => {
     { v: 'grid', ico: '▦', label: 'Grille' + ck(nView === 'grid'), sub: 'Cartes avec un aperçu de la note' },
     { v: 'compact', ico: '≡', label: 'Compacte' + ck(nView === 'compact'), sub: 'Seulement les titres, pour voir beaucoup de notes' },
     { v: 'sort', ico: '⇅', label: 'Trier : ' + ({ upd: 'date de modification', cre: 'date de création', az: 'titre (A → Z)' })[nSort], sub: 'Touchez pour changer' },
-    { v: 'imp', ico: '📥', cls: 'y', label: 'Importer des notes', sub: 'Notes Samsung (.sdocx), texte ou Word' }
+    { v: 'imp', ico: '📥', cls: 'y', label: 'Importer des notes', sub: 'Notes Samsung (.sdocx), texte ou Word' },
+    ...(DOSSIER !== 'all' && DOSSIER !== 'trash' ? [{ v: 'ren', ico: '✏️', label: 'Renommer le dossier' }, { v: 'rmd', ico: '🗑️', dg: 1, label: 'Supprimer le dossier', sub: 'Ses notes retournent dans Notes' }] : []),
+    ...(DOSSIER === 'trash' && NOTES.some(n => n.del) ? [{ v: 'vide', ico: '🗑️', dg: 1, label: 'Tout supprimer définitivement' }] : [])
   ]);
+  if (v === 'ren') { let t = await ask({ title: 'Nouveau nom', input: DOSSIER, ok: 'Renommer' }); t = (t || '').trim().slice(0, 40); if (t && t !== DOSSIER && !DOSSIERS.includes(t)) { DOSSIERS = DOSSIERS.map(x => x === DOSSIER ? t : x); NOTES.forEach(n => { if (n.folder === DOSSIER) n.folder = t; }); DOSSIER = t; await mset('nfolders', DOSSIERS); await nSave(); notesDraw(); } }
+  if (v === 'rmd' && await sheet('Supprimer le dossier « ' + DOSSIER + ' » ?', [{ v: 'ok', dg: 1, label: 'Supprimer le dossier (garder les notes)' }]) === 'ok') { NOTES.forEach(n => { if (n.folder === DOSSIER) delete n.folder; }); DOSSIERS = DOSSIERS.filter(x => x !== DOSSIER); DOSSIER = 'all'; await mset('nfolders', DOSSIERS); await nSave(); notesDraw(); toast('Dossier supprimé'); }
+  if (v === 'vide' && await sheet('Vider « Récemment supprimées » ?', [{ v: 'ok', dg: 1, label: 'Tout supprimer définitivement' }]) === 'ok') { const L = NOTES.filter(n => n.del); for (const n of L) await pjSuppr(n.scans); NOTES = NOTES.filter(n => !n.del); await nSave(); notesDraw(); }
   if (['list', 'grid', 'compact'].includes(v)) { nView = v; try { localStorage.setItem('nview', v); } catch (e) {} notesDraw(); }
   if (v === 'sort') {
     const s = await sheet('Trier les notes', [
@@ -793,11 +930,11 @@ async function albumMenu(a) {
   await saveAlbums(); render();
 }
 async function pickAlbum(title) {
-  const opts = [{ v: '\u0000', ico: '🗂', cls: 'gr', label: 'Sans album' }, ...ALBUMS.map(a => ({ v: a, ico: '📁', cls: 'y', label: a })), { v: '\u0001', ico: '＋', cls: 'b', label: 'Nouvel album…' }];
+  const opts = [{ v: '__aucun', ico: '🗂', cls: 'gr', label: 'Sans album' }, ...ALBUMS.map(a => ({ v: a, ico: '📁', cls: 'y', label: a })), { v: '__nouveau', ico: '＋', cls: 'b', label: 'Nouvel album…' }];
   const v = await sheet(title, opts);
   if (v === null) return null;
-  if (v === '\u0000') return '';
-  if (v === '\u0001') return await newAlbum();
+  if (v === '__aucun') return '';
+  if (v === '__nouveau') return await newAlbum();
   return v;
 }
 async function moveItems(list, album, quiet) {

@@ -306,6 +306,7 @@ const busy = t => { E('scBusyT').textContent = t || ''; E('scBusy').classList.to
 const tick = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
 
 /* ---------- État ---------- */
+let DEST = 'vault';   // 'vault' : caché dans le coffre ; 'note' : bloc-notes, comme Adobe Scan
 let PAGES = [], CUR = 0, FILT = 'auto', AUTO = true, stream = null, track = null, loop = null, torch = false;
 let lastQ = null, stable = 0, cool = 0, need = null, open = false, cropIdx = -1, cropQ = null, cropSrc = null, cropNew = false;
 try { const s = localStorage.getItem('scanPrefs'); if (s) { const o = JSON.parse(s); FILT = o.f || FILT; AUTO = o.a !== false; } } catch (e) {}
@@ -518,6 +519,7 @@ E('scRevBack').onclick = () => { revFrom = false; pane('scCam'); if (stream) { c
 const jpg = c => new Promise(ok => c.toBlob(b => b.arrayBuffer().then(a => ok(new Uint8Array(a))), 'image/jpeg', .85));
 const thumbOf = c => drawThumb(c, c.width, c.height);
 E('scSave').onclick = async () => {
+  if (DEST === 'note') return saveNote();
   if (!PAGES.length || !KEY) return;
   const fmt = await sheet('Enregistrer le scan', [
     { v: 'pdf', ico: '📕', cls: 'r', label: 'PDF', sub: PAGES.length > 1 ? `Un seul fichier de ${PAGES.length} pages` : 'Un fichier PDF' },
@@ -546,6 +548,71 @@ E('scSave').onclick = async () => {
     toast(fmt === 'pdf' ? `Document scanné caché dans le coffre 🔐 (${n} page${n > 1 ? 's' : ''})` : `${n} page${n > 1 ? 's' : ''} cachée${n > 1 ? 's' : ''} dans le coffre 🔐`, 2800);
   } catch (e) { console.warn(e); busy(); toast('Impossible d’enregistrer : mémoire pleine ?', 3500); }
 };
+
+/* ---------- Bloc-notes : scan comme Adobe Scan (PDF à partager, texte reconnu, note) ---------- */
+const pdfOf = async () => { const pg = []; for (const p of PAGES) pg.push({ jpg: await jpg(p.out), w: p.out.width, h: p.out.height }); return SC.pdf(pg); };
+async function partager(bytes, name, type) {
+  const f = new File([bytes], name, { type });
+  try { if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: name }); return true; } } catch (e) { if (e.name === 'AbortError') return true; }
+  const u = URL.createObjectURL(f), a = document.createElement('a'); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 60000);
+  return true;
+}
+async function lireTexte() {
+  if (!window.ocrPages) return '';
+  busy('Préparation de la lecture du texte…'); await tick();
+  const t = await window.ocrPages(PAGES.map(p => p.out), (i, n) => busy(i < 0 ? 'Préparation de la lecture du texte…' : `Lecture du texte… page ${i}/${n}`));
+  return t.map((x, i) => (PAGES.length > 1 && x ? `— Page ${i + 1} —\n` : '') + x).filter(Boolean).join('\n\n');
+}
+window.scanPartager = partager;
+const pageMini = c => { const W = 132, H = 168, m = document.createElement('canvas'); m.width = W; m.height = H; const g = m.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); const k = W / c.width; g.drawImage(c, 0, 0, W, c.height * k); return m.toDataURL('image/jpeg', .8); };   // haut de la 1re page, comme une vignette de document
+async function saveNote() {
+  if (!PAGES.length) return;
+  const n = PAGES.length, pl = n > 1 ? 's' : '';
+  const v = await sheet('Que faire du scan ?', [
+    { v: 'note', ico: '📝', cls: 'y', label: curNote ? 'Ajouter à cette note' : 'Créer une note', sub: 'PDF joint + texte reconnu, modifiable' },
+    { v: 'pdf', ico: '📕', cls: 'r', label: 'Partager en PDF', sub: n > 1 ? `Un seul fichier de ${n} pages` : 'WhatsApp, e-mail, Drive…' },
+    { v: 'txt', ico: '🔤', cls: 'g', label: 'Copier le texte', sub: 'Reconnaissance du texte (OCR)' },
+    { v: 'jpg', ico: '🖼', cls: 'b', label: `Partager en photo${pl}`, sub: n > 1 ? 'Une image par page' : 'Une image JPEG' }
+  ]);
+  if (!v) return;
+  try {
+    if (v === 'pdf') {
+      let name = await ask({ title: 'Nom du PDF', input: 'Scan ' + stamp(), ok: 'Partager' }); if (name === null) return;
+      name = (name || '').trim().replace(/[\\/:*?"<>|]/g, '-') || 'Scan ' + stamp();
+      busy('Création du PDF…'); await tick(); const b = await pdfOf(); busy();
+      await partager(b, /\.pdf$/i.test(name) ? name : name + '.pdf', 'application/pdf'); return;
+    }
+    if (v === 'jpg') {
+      busy('Préparation…'); await tick();
+      const files = []; for (let i = 0; i < n; i++) files.push(new File([await jpg(PAGES[i].out)], `Scan ${stamp()}${n > 1 ? ` (${i + 1})` : ''}.jpg`, { type: 'image/jpeg' }));
+      busy();
+      try { if (navigator.canShare && navigator.canShare({ files })) { await navigator.share({ files }); return; } } catch (e) { if (e.name === 'AbortError') return; }
+      for (const f of files) await partager(f, f.name, f.type); return;
+    }
+    if (v === 'txt') {
+      const t = await lireTexte(); busy();
+      if (!t) { toast('Aucun texte trouvé sur ce document', 2600); return; }
+      try { await navigator.clipboard.writeText(t); toast('Texte copié ✓', 2200); } catch (e) { toast('Copie impossible', 2200); }
+      return;
+    }
+    // note : PDF joint + texte reconnu
+    let name = curNote ? (curNote.title || 'Scan') : await ask({ title: 'Nom de la note', input: 'Scan ' + stamp(), ok: 'Créer' });
+    if (name === null) return; name = (name || '').trim() || 'Scan ' + stamp();
+    busy('Création du PDF…'); await tick();
+    const bytes = await pdfOf(), id = 'ns' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    let texte = ''; try { texte = await lireTexte(); } catch (e) { console.warn(e); }
+    busy('Enregistrement…'); await tick();
+    await mset('nscan:' + id, bytes.buffer);
+    const pj = { id, name: (name.replace(/[\\/:*?"<>|]/g, '-')) + '.pdf', pages: n, size: bytes.length, thumb: pageMini(PAGES[0].out), at: Date.now() };
+    let note = curNote;
+    if (!note) { note = { id: 'n' + Date.now().toString(36), title: name, txt: '', upd: Date.now() }; NOTES.push(note); }
+    note.scans = (note.scans || []).concat(pj);
+    if (texte) note.txt = (note.txt ? note.txt.replace(/\s+$/, '') + '\n\n' : '') + texte;
+    note.upd = Date.now(); await nSave();
+    const nn = note; scanClose(true); busy(); noteEdit(nn);
+    toast(texte ? `Scan ajouté avec son texte (${n} page${pl}) ✓` : `Scan ajouté (${n} page${pl}) ✓`, 2600);
+  } catch (e) { console.warn(e); busy(); toast('Impossible : mémoire pleine ?', 3000); }
+}
 
 /* ---------- Import depuis la galerie ---------- */
 E('scGal').onclick = () => { const f = E('scIn'); f.value = ''; pickerOpen = true; setTimeout(() => pickerOpen = false, 90000); f.click(); };
@@ -581,14 +648,15 @@ E('scX').onclick = async () => {
 };
 
 /* ---------- Ouverture / fermeture ---------- */
-window.scanOpen = () => {
-  if (!KEY) return; open = true; PAGES = []; CUR = 0; lastQ = null; need = null; stable = 0; cool = 0; revFrom = false;
+window.scanOpen = (dest) => {
+  DEST = dest === 'note' ? 'note' : 'vault';
+  if (DEST === 'vault' && !KEY) return; open = true; PAGES = []; CUR = 0; lastQ = null; need = null; stable = 0; cool = 0; revFrom = false;
   drawPg(); drawMode(); pane('scCam'); hint('Placez le document dans l’écran', false); show('scan'); camStart();
 };
 function scanClose(silent) {
   open = false; camStop(); busy();
   PAGES.forEach(p => p.url && URL.revokeObjectURL(p.url)); PAGES = [];
-  if (!silent) show('vault');
+  if (!silent) show(DEST === 'note' ? (curNote ? 'nedit' : 'notes') : 'vault');
 }
 window.scanClose = scanClose;
 // Le coffre se verrouille : on coupe la caméra et on efface les pages en mémoire
