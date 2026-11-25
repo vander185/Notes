@@ -276,6 +276,7 @@ public class MainActivity extends Activity {
             return GeoReceiver.ajouter(MainActivity.this, id, lat, lon, (float) Math.max(100, Math.min(rayon, 1000)), arrivee, texte, lieu);
         }
         @JavascriptInterface public void cancelGeofence(String id) { GeoReceiver.retirer(MainActivity.this, id); }
+        @JavascriptInterface public String geoIds() { return new org.json.JSONArray(GeoReceiver.prefs(MainActivity.this).getAll().keySet()).toString(); }
         /* widget de l'écran d'accueil : prochain rendez-vous */
         @JavascriptInterface public void widget(String txt) {
             WakeService.prefs(MainActivity.this).edit().putString("widget_txt", txt == null || txt.isEmpty() ? "Touche pour parler à Claire" : txt).apply();
