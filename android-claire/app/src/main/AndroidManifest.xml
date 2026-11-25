@@ -67,8 +67,14 @@
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info" />
         </receiver>
 
-        <!-- lecture des notifications : retirée de cette version (Google Play Protect bloque l'installation
-             hors Play Store des applis qui peuvent lire les notifications) -->
+        <!-- lecture des notifications, seulement si Ahmed l'autorise dans les réglages du téléphone -->
+        <service
+            android:name=".NotifService"
+            android:label="Claire"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>
+        </service>
 
         <!-- photos de documents prises avec l'appareil photo -->
         <provider
