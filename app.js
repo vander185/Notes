@@ -386,7 +386,7 @@ function dossiersDraw() {
   const F = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
   const T = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
   $('#fdl').innerHTML = `<div class="ng">${ligne('all', F, 'Notes', actives.length)}${DOSSIERS.map(d => ligne(d, F, d, cnt(d))).join('')}</div>` +
-    `<div class="ng" style="margin-top:22px">${ligne('trash', T, 'Récemment supprimées', nb)}</div>`;
+    `<div class="ng" style="margin-top:22px">${ligne('docs', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>', 'Documents scannés', tousScans().length)}${ligne('trash', T, 'Récemment supprimées', nb)}</div>`;
 }
 (() => {
   const sec = document.createElement('section'); sec.id = 'nfold'; sec.className = 'scr';
@@ -402,21 +402,163 @@ function dossiersDraw() {
 #notes .ntop span{cursor:pointer}`;
   document.head.appendChild(st);
   $('#notes .ntop span').onclick = () => { dossiersDraw(); show('nfold'); };
-  $('#fdl').onclick = e => { const b = e.target.closest('.fd'); if (!b) return; DOSSIER = b.dataset.d; $('#nsearch').value = ''; notesDraw(); show('notes'); };
+  $('#fdl').onclick = e => { const b = e.target.closest('.fd'); if (!b) return; if (b.dataset.d === 'docs') return docsOpen(); DOSSIER = b.dataset.d; $('#nsearch').value = ''; notesDraw(); show('notes'); };
   $('#fdnew').onclick = async () => { const d = await nouveauDossier(); if (d) { dossiersDraw(); toast('Dossier « ' + d + ' » créé'); } };
 })();
+/* ---------- Scans : enregistrement automatique (téléphone + Google Drive) et écran « Documents » ---------- */
+const SEXP = () => { try { return Object.assign({ tel: true, drive: true }, JSON.parse(localStorage.getItem('scanExp') || '{}')); } catch (e) { return { tel: true, drive: true }; } };
+const SEXPset = o => { try { localStorage.setItem('scanExp', JSON.stringify(Object.assign(SEXP(), o))); } catch (e) {} };
+let nTok = null, nExp = 0;
+const nLive = () => !!nTok && Date.now() < nExp;
+function nAuth() {   // Google Drive, seulement les fichiers créés par Notes (drive.file)
+  return new Promise((ok, ko) => {
+    const st = 'd' + b64(rnd(15)).replace(/[^a-z0-9]/gi, '');
+    const q = { client_id: gClient(), redirect_uri: gRedirect(), response_type: 'token', scope: 'https://www.googleapis.com/auth/drive.file', state: st, include_granted_scopes: 'true' };
+    const em = SEXP().email; if (em) q.login_hint = em;
+    let fini = false, bc = null;
+    const fin = (err, v) => { if (fini) return; fini = true; try { bc && bc.close(); } catch (e) {} window.removeEventListener('message', onMsg); clearTimeout(to); setTimeout(() => pickerOpen = false, 1500); err ? ko(err) : ok(v); };
+    const got = d => { if (!d || d.state !== st) return; if (d.error || !d.token) return fin(new Error(d.error || 'refus')); nTok = d.token; nExp = Date.now() + (d.exp - 120) * 1000; fin(null, nTok); };
+    try { bc = new BroadcastChannel('notes-oauth'); bc.onmessage = e => got(e.data); } catch (e) {}
+    const onMsg = e => { if (e.origin === location.origin) got(e.data); };
+    window.addEventListener('message', onMsg);
+    const to = setTimeout(() => fin(new Error('timeout')), 180000);
+    pickerOpen = true;
+    if (!window.open('https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams(q), 'notes_google')) fin(new Error('popup'));
+  });
+}
+window.scanDrivePret = () => { const p = SEXP(); if (!p.drive) return null; const r = nLive() ? Promise.resolve(nTok) : nAuth(); r.catch(() => {}); return r; };
+async function dFetch(path, opt = {}) {
+  const r = await fetch('https://www.googleapis.com' + path, { ...opt, headers: { Authorization: 'Bearer ' + nTok, ...(opt.headers || {}) } });
+  if (r.status === 401) { nTok = null; throw Object.assign(new Error('auth'), { auth: 1 }); }
+  if (!r.ok) { const e = new Error('Drive ' + r.status); e.status = r.status; throw e; }
+  return r.json();
+}
+async function dDossier() {
+  let id = null; try { id = localStorage.getItem('scanDossier'); } catch (e) {}
+  if (id) { try { const f = await dFetch(`/drive/v3/files/${id}?fields=id,trashed`); if (!f.trashed) return id; } catch (e) { if (e.auth) throw e; } }
+  const f = await dFetch('/drive/v3/files?fields=id', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Scans (Notes)', mimeType: 'application/vnd.google-apps.folder' }) });
+  try { localStorage.setItem('scanDossier', f.id); } catch (e) {}
+  return f.id;
+}
+async function dEnvoyer(bytes, nom) {
+  const dos = await dDossier(), b = 'scan' + Math.random().toString(36).slice(2);
+  const corps = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`, JSON.stringify({ name: nom, parents: [dos], mimeType: 'application/pdf' }), `\r\n--${b}\r\nContent-Type: application/pdf\r\n\r\n`, bytes, `\r\n--${b}--`]);
+  const f = await dFetch('/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink', { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + b }, body: corps });
+  if (!SEXP().email) { try { const u = await dFetch('/drive/v3/about?fields=user(emailAddress)'); SEXPset({ email: u.user.emailAddress }); } catch (e) {} }
+  return { id: f.id, link: f.webViewLink };
+}
+function telecharger(bytes, nom) {
+  const u = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })), a = document.createElement('a');
+  a.href = u; a.download = nom; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 60000);
+}
+async function pjDrive(pj, bytes, tokP) {   // envoie un scan sur Drive ; s'il ne part pas, il reste « en attente »
+  try {
+    await (tokP || (nLive() ? Promise.resolve() : nAuth()));
+    pj.drive = await dEnvoyer(bytes, pj.name); delete pj.dwait; await nSave(); if ($('#ndocs.on')) docsDraw();
+    toast('☁️ Enregistré sur Google Drive (dossier « Scans (Notes) »)', 2800); return true;
+  } catch (e) {
+    pj.dwait = 1; await nSave(); if ($('#ndocs.on')) docsDraw();
+    toast(e.message === 'popup' ? 'Drive : autorise les fenêtres, puis « Envoyer les scans en attente »' : 'Drive : pas envoyé pour l’instant (en attente)', 3500);
+    return false;
+  }
+}
+window.scanExporter = async (bytes, pj, note, tokP) => {
+  const p = SEXP();
+  if (p.tel) { try { telecharger(bytes, pj.name); pj.tel = 1; await nSave(); } catch (e) {} }
+  if (p.drive && tokP) await pjDrive(pj, bytes, tokP);
+};
+/* écran « Documents » : tous les scans, avec aperçu, recherche et actions */
+const tousScans = () => NOTES.filter(n => !n.del).flatMap(n => (n.scans || []).map(p => ({ p, n }))).sort((a, b) => (b.p.at || 0) - (a.p.at || 0));
+function docsDraw() {
+  const q = ($('#dsearch').value || '').trim().toLowerCase();
+  const L = tousScans().filter(({ p, n }) => !q || (p.name + ' ' + nFull(n)).toLowerCase().includes(q));
+  $('#dsub').textContent = L.length + ' document' + (L.length > 1 ? 's' : '');
+  $('#dgrid').innerHTML = L.length ? L.map(({ p, n }) => `<button class="dc" data-pj="${p.id}" data-n="${n.id}"><span class="dt"><img src="${p.thumb}" alt="">${p.drive ? '<i class="dk">☁️ Drive</i>' : p.dwait ? '<i class="dk">⏳</i>' : ''}</span><b>${esc(p.name.replace(/\.pdf$/i, ''))}</b><small>${new Date(p.at || n.upd).toLocaleDateString('fr-BE', { day: 'numeric', month: 'short' })} · ${p.pages} page${p.pages > 1 ? 's' : ''}</small></button>`).join('')
+    : `<p class="dv">${q ? 'Aucun document trouvé' : 'Aucun document scanné.<br><small>Touche « Scanner un document » pour commencer.</small>'}</p>`;
+}
+function docsOpen() { $('#dsearch').value = ''; docsDraw(); show('ndocs'); }
+async function docVoir(p, n) {
+  const buf = await mget('nscan:' + p.id); if (!buf) { toast('Document introuvable'); return; }
+  const imgs = window.SCANCORE.pdfImages(buf), urls = imgs.map(x => URL.createObjectURL(new Blob([x], { type: 'image/jpeg' })));
+  const d = document.createElement('div'); d.id = 'npv';
+  const ico = path => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+  d.innerHTML = `<div class="h"><button data-x="x">‹ Retour</button><b>${esc(p.name.replace(/\.pdf$/i, ''))}</b><span class="pg">${urls.length} p.</span></div>` +
+    `<div class="p">${urls.map((u, i) => `<img src="${u}" alt="Page ${i + 1}">`).join('')}</div>` +
+    `<div class="vb"><button data-x="share">${ico('<path d="M12 3v12M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/>')}Partager</button>` +
+    `<button data-x="dl">${ico('<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>')}Téléphone</button>` +
+    `<button data-x="drive">${ico('<path d="M7 18a4 4 0 0 1-.5-8A5.5 5.5 0 0 1 17 8.5 4.5 4.5 0 0 1 17.5 18z"/>')}${p.drive ? 'Ouvrir Drive' : 'Drive'}</button>` +
+    `<button data-x="note">${ico('<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>')}Note</button></div>`;
+  document.body.appendChild(d);
+  const fin = () => { d.remove(); urls.forEach(u => URL.revokeObjectURL(u)); };
+  d.onclick = async e => {
+    const b = e.target.closest('[data-x]'); if (!b) return; const x = b.dataset.x;
+    if (x === 'x') fin();
+    if (x === 'share') window.scanPartager(new Uint8Array(buf), p.name, 'application/pdf');
+    if (x === 'dl') { telecharger(new Uint8Array(buf), p.name); toast('PDF enregistré dans Téléchargements'); }
+    if (x === 'drive') { if (p.drive && p.drive.link) window.open(p.drive.link, '_blank'); else { toast('Envoi sur Google Drive…'); if (await pjDrive(p, new Uint8Array(buf))) { fin(); docVoir(p, n); } } }
+    if (x === 'note') { fin(); noteEdit(n); }
+  };
+}
+(() => {
+  const sec = document.createElement('section'); sec.id = 'ndocs'; sec.className = 'scr';
+  sec.innerHTML = `<div class="ntop"><span id="dback"><svg class="i"><use href="#i-left"/></svg>Notes</span><button id="dset" style="color:inherit;display:flex" aria-label="Réglages des scans"><svg class="i"><use href="#i-gear"/></svg></button></div>
+<div class="nh"><h1>Documents</h1><p id="dsub" class="sub"></p><input id="dsearch" type="search" placeholder="Rechercher dans les documents" autocomplete="off" spellcheck="false"></div>
+<div id="dgrid"></div><div class="nfoot"><div class="nfab"><button id="dscan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/></svg><span>Scanner un document</span></button></div></div>`;
+  $('#notes').after(sec);
+  const st = document.createElement('style');
+  st.textContent = `#ndocs{background:radial-gradient(120% 60% at 50% -10%,#1a1710 0%,#000 55%)}
+#ndocs .ntop{display:flex;justify-content:space-between;align-items:center;padding:calc(10px + env(safe-area-inset-top)) 12px 0;color:#e5b400;font-size:17px}#ndocs .ntop span{display:flex;align-items:center;gap:2px;cursor:pointer}
+#ndocs .nh{padding:2px 16px 6px}#ndocs h1{text-align:left;font-size:34px;margin:2px 0 0;font-weight:700;letter-spacing:-.02em}#ndocs .sub{text-align:left;margin:0 0 12px;color:#8e8e93;font-size:14px}
+#dsearch{width:100%;height:42px;padding:9px 12px 9px 34px;border-radius:13px;border:1px solid #ffffff0d;background:#1a1a1d url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%238e8e93'%3E%3Cpath d='M6.5 1a5.5 5.5 0 0 1 4.4 8.8l3.6 3.6-1.1 1.1-3.6-3.6A5.5 5.5 0 1 1 6.5 1zm0 1.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8z'/%3E%3C/svg%3E") 11px center no-repeat;color:#fff;font-size:16px;outline:none;-webkit-appearance:none}
+#dgrid{flex:1;overflow-y:auto;display:grid;grid-template-columns:1fr 1fr;gap:16px 14px;padding:14px 16px 130px;align-content:start}
+.dc{display:flex;flex-direction:column;gap:6px;text-align:left;color:#fff}.dc:active{opacity:.75}
+.dc .dt{position:relative;aspect-ratio:3/4;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 6px 20px #0009;border:1px solid #ffffff14}
+.dc img{width:100%;height:100%;object-fit:cover;object-position:top}
+.dc .dk{position:absolute;right:6px;bottom:6px;font-style:normal;font-size:11px;font-weight:600;color:#fff;background:#000b;border-radius:99px;padding:3px 7px}
+.dc b{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dc small{color:#8e8e93;font-size:12px;margin-top:-4px}
+.dv{grid-column:1/-1;text-align:center;color:#8e8e93;margin-top:50px;line-height:1.6}
+#npv .pg{color:#8e8e93;font-size:13px}#npv .p{padding-bottom:100px}
+#npv .vb{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));display:flex;gap:2px;padding:6px;border-radius:99px;background:#1c1c1fe6;border:1px solid #ffffff14;box-shadow:0 10px 30px #000a;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+#npv .vb button{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 12px;color:#e5b400;font-size:11.5px;font-weight:600;border-radius:18px}#npv .vb button:active{background:#ffffff12}#npv .vb svg{width:21px;height:21px}`;
+  document.head.appendChild(st);
+  $('#dback').onclick = () => { notesDraw(); show('notes'); };
+  $('#dsearch').addEventListener('input', docsDraw);
+  $('#dgrid').onclick = e => { const b = e.target.closest('.dc'); if (!b) return; const n = NOTES.find(x => x.id === b.dataset.n), p = n && (n.scans || []).find(x => x.id === b.dataset.pj); if (p) docVoir(p, n); };
+  $('#dscan').onclick = () => { curNote = null; window.scanOpen && scanOpen('note'); };
+  $('#dset').onclick = () => scanReglages();
+})();
+async function scanReglages() {
+  const p = SEXP(), ck = b => b ? '  ✓' : '', att = tousScans().filter(x => x.p.dwait);
+  const v = await sheet('Enregistrement des scans', [
+    { v: 'tel', ico: '📱', label: 'Sur le téléphone (PDF)' + ck(p.tel), sub: 'Dans Téléchargements, à chaque scan' },
+    { v: 'drive', ico: '☁️', label: 'Sur Google Drive' + ck(p.drive), sub: p.email ? p.email + ' · dossier « Scans (Notes) »' : 'Dossier « Scans (Notes) » de ton Drive' },
+    ...(att.length ? [{ v: 'wait', ico: '⏳', cls: 'y', label: 'Envoyer les scans en attente', sub: att.length + ' document' + (att.length > 1 ? 's' : '') }] : [])
+  ]);
+  if (v === 'tel') toast(!p.tel ? 'Les scans seront enregistrés sur le téléphone' : 'Plus d’enregistrement sur le téléphone'), SEXPset({ tel: !p.tel });
+  if (v === 'drive') {
+    if (p.drive) { SEXPset({ drive: false }); toast('Plus d’envoi sur Google Drive'); }
+    else { SEXPset({ drive: true }); try { await nAuth(); toast('Google Drive relié ✓'); } catch (e) { toast('Connexion Google annulée'); } }
+  }
+  if (v === 'wait') {
+    try { await nAuth(); } catch (e) { toast('Connexion Google annulée'); return; }
+    for (const { p: pj } of att) { const b = await mget('nscan:' + pj.id); if (b) await pjDrive(pj, new Uint8Array(b), Promise.resolve()); }
+  }
+}
+
 /* ---------- Puces de dossiers et glisser pour agir ---------- */
 function chipsDraw() {
   const el = $('#nchips'); if (!el) return;
   const actives = NOTES.filter(n => !n.del), nbDel = NOTES.filter(n => n.del).length;
   const c = (v, nom, n) => `<button data-d="${esc(v)}" class="${DOSSIER === v ? 'on' : ''}">${nom}${n !== undefined ? ` <i>${n}</i>` : ''}</button>`;
-  el.innerHTML = c('all', 'Toutes', actives.length) + DOSSIERS.map(d => c(d, esc(d), actives.filter(n => n.folder === d).length)).join('') +
+  const nbDocs = tousScans().length;
+  el.innerHTML = (nbDocs ? `<button data-d="docs" class="docs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>Documents <i>${nbDocs}</i></button>` : '') + c('all', 'Toutes', actives.length) + DOSSIERS.map(d => c(d, esc(d), actives.filter(n => n.folder === d).length)).join('') +
     `<button class="add" data-d="+" aria-label="Nouveau dossier">＋</button>` +
     (nbDel || DOSSIER === 'trash' ? c('trash', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Supprimées', nbDel) : '');
   const on = el.querySelector('.on'); if (on && on.scrollIntoView) on.scrollIntoView({ inline: 'nearest', block: 'nearest' });
 }
 $('#nchips').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.d === 'docs') return docsOpen();
   if (b.dataset.d === '+') { const d = await nouveauDossier(); if (d) { DOSSIER = d; notesDraw(); toast('Dossier « ' + d + ' » créé'); } return; }
   DOSSIER = b.dataset.d; notesDraw(); $('#nlist').scrollTop = 0;
 });
@@ -674,9 +816,13 @@ $('#nmore').onclick = async () => {
     { v: 'compact', ico: '≡', label: 'Compacte' + ck(nView === 'compact'), sub: 'Seulement les titres, pour voir beaucoup de notes' },
     { v: 'sort', ico: '⇅', label: 'Trier : ' + ({ upd: 'date de modification', cre: 'date de création', az: 'titre (A → Z)' })[nSort], sub: 'Touchez pour changer' },
     { v: 'imp', ico: '📥', cls: 'y', label: 'Importer des notes', sub: 'Notes Samsung (.sdocx), texte ou Word' },
+    { v: 'docs', ico: '📄', label: 'Documents scannés', sub: 'Tous tes scans en un coup d’œil' },
+    { v: 'sexp', ico: '⚙️', label: 'Enregistrement des scans', sub: 'Téléphone (PDF) et Google Drive' },
     ...(DOSSIER !== 'all' && DOSSIER !== 'trash' ? [{ v: 'ren', ico: '✏️', label: 'Renommer le dossier' }, { v: 'rmd', ico: '🗑️', dg: 1, label: 'Supprimer le dossier', sub: 'Ses notes retournent dans Notes' }] : []),
     ...(DOSSIER === 'trash' && NOTES.some(n => n.del) ? [{ v: 'vide', ico: '🗑️', dg: 1, label: 'Tout supprimer définitivement' }] : [])
   ]);
+  if (v === 'docs') return docsOpen();
+  if (v === 'sexp') return scanReglages();
   if (v === 'ren') { let t = await ask({ title: 'Nouveau nom', input: DOSSIER, ok: 'Renommer' }); t = (t || '').trim().slice(0, 40); if (t && t !== DOSSIER && !DOSSIERS.includes(t)) { DOSSIERS = DOSSIERS.map(x => x === DOSSIER ? t : x); NOTES.forEach(n => { if (n.folder === DOSSIER) n.folder = t; }); DOSSIER = t; await mset('nfolders', DOSSIERS); await nSave(); notesDraw(); } }
   if (v === 'rmd' && await sheet('Supprimer le dossier « ' + DOSSIER + ' » ?', [{ v: 'ok', dg: 1, label: 'Supprimer le dossier (garder les notes)' }]) === 'ok') { NOTES.forEach(n => { if (n.folder === DOSSIER) delete n.folder; }); DOSSIERS = DOSSIERS.filter(x => x !== DOSSIER); DOSSIER = 'all'; await mset('nfolders', DOSSIERS); await nSave(); notesDraw(); toast('Dossier supprimé'); }
   if (v === 'vide' && await sheet('Vider « Récemment supprimées » ?', [{ v: 'ok', dg: 1, label: 'Tout supprimer définitivement' }]) === 'ok') { const L = NOTES.filter(n => n.del); for (const n of L) await pjSuppr(n.scans); NOTES = NOTES.filter(n => !n.del); await nSave(); notesDraw(); }

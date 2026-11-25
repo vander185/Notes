@@ -598,6 +598,7 @@ async function saveNote() {
     // note : PDF joint + texte reconnu
     let name = curNote ? (curNote.title || 'Scan') : await ask({ title: 'Nom de la note', input: 'Scan ' + stamp(), ok: 'Créer' });
     if (name === null) return; name = (name || '').trim() || 'Scan ' + stamp();
+    const drive = window.scanDrivePret ? window.scanDrivePret() : null;   // connexion Google demandée tout de suite (le toucher le permet)
     busy('Création du PDF…'); await tick();
     const bytes = await pdfOf(), id = 'ns' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
     let texte = ''; try { texte = await lireTexte(); } catch (e) { console.warn(e); }
@@ -611,6 +612,7 @@ async function saveNote() {
     note.upd = Date.now(); await nSave();
     const nn = note; scanClose(true); busy(); noteEdit(nn);
     toast(texte ? `Scan ajouté avec son texte (${n} page${pl}) ✓` : `Scan ajouté (${n} page${pl}) ✓`, 2600);
+    if (window.scanExporter) window.scanExporter(bytes, pj, nn, drive);   // téléphone (PDF) + Google Drive, en arrière-plan
   } catch (e) { console.warn(e); busy(); toast('Impossible : mémoire pleine ?', 3000); }
 }
 
