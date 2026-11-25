@@ -231,6 +231,79 @@ SC.filter = (d, w, h, mode, adj) => {
   if (net > 0.02) SC.sharpen(d, w, h, net);
 };
 
+/* ---------- Titre automatique : genre de document + numéro + émetteur + date, lu dans le texte ---------- */
+SC.TYPES = [
+  [/note\s+de\s+cr[ée]dit|creditnota|credit\s+note/i, 'Note de crédit'],
+  [/\bfacture\b|\binvoice\b|\bfactuur\b/i, 'Facture'],
+  [/\bdevis\b|\bofferte\b|\bquotation\b|\bestimation\b/i, 'Devis'],
+  [/bon\s+de\s+commande|bestelbon|purchase\s+order/i, 'Bon de commande'],
+  [/bon\s+de\s+livraison|leveringsbon|delivery\s+note/i, 'Bon de livraison'],
+  [/fiche\s+de\s+(paie|salaire)|bulletin\s+de\s+(paie|salaire)|loonbrief|loonfiche|payslip/i, 'Fiche de paie'],
+  [/contrat\s+de\s+(bail|location)|\bbail\b|huurcontract|huurovereenkomst/i, 'Bail'],
+  [/\bcontrat\b|overeenkomst|\bcontract\b/i, 'Contrat'],
+  [/certificat\s+m[ée]dical|medisch\s+attest/i, 'Certificat médical'],
+  [/\bordonnance\b|voorschrift|prescription\s+m[ée]dicale/i, 'Ordonnance'],
+  [/attestation|\battest\b|certificat\b/i, 'Attestation'],
+  [/relev[ée]\s+de\s+compte|extrait\s+de\s+compte|rekeninguittreksel|bank\s+statement/i, 'Relevé bancaire'],
+  [/avertissement[- ]extrait\s+de\s+r[ôo]le|avis\s+d.imposition|aanslagbiljet|spf\s+finances|imp[ôo]ts?\b/i, 'Impôts'],
+  [/perception\s+imm[ée]diate|proc[eè]s[- ]verbal|\bamende\b|\bboete\b|\bpv\s+n/i, 'Amende'],
+  [/mise\s+en\s+demeure|\brappel\b|herinnering|ingebrekestelling/i, 'Rappel de paiement'],
+  [/assurance|verzekering|police\s+n/i, 'Assurance'],
+  [/ticket\s+de\s+caisse|kassaticket|\bre[çc]u\b|\breceipt\b|\bkasticket\b/i, 'Ticket de caisse'],
+  [/convocation|oproeping/i, 'Convocation'],
+  [/bulletin\s+scolaire|rapport\s+scolaire|\bbulletin\b/i, 'Bulletin'],
+  [/curriculum|\bcv\b/i, 'CV'],
+  [/garantie|warranty/i, 'Garantie'],
+  [/carte\s+d.embarquement|boarding\s+pass|\bbillet\b|e-ticket/i, 'Billet'],
+  [/mode\s+d.emploi|\bnotice\b|handleiding|manual\b/i, 'Notice'],
+  [/ingr[ée]dients|pr[ée]paration\s*:/i, 'Recette'],
+  [/\bmenu\b|\bcarte\s+des\b/i, 'Menu'],
+  [/ordre\s+du\s+jour|compte[- ]rendu|proc[eè]s[- ]verbal\s+de\s+r[ée]union|notulen/i, 'Compte rendu']
+];
+SC.MOIS = { janvier: 1, février: 2, fevrier: 2, mars: 3, avril: 4, mai: 5, juin: 6, juillet: 7, août: 8, aout: 8, septembre: 9, octobre: 10, novembre: 11, décembre: 12, decembre: 12, januari: 1, februari: 2, maart: 3, april: 4, mei: 5, juni: 6, juli: 7, augustus: 8, oktober: 10, december: 12, november: 11, september: 9, october: 10, january: 1, february: 2, march: 3, june: 6, july: 7, august: 8 };
+SC.titre = texte => {
+  const t = (texte || '').replace(/— Page \d+ —/g, '').replace(/[ \t]+/g, ' ');
+  const lignes = t.split(/\n/).map(l => l.trim()).filter(l => l.length > 1);
+  if (!lignes.length) return '';
+  const debut = lignes.slice(0, 25).join('\n'), propre = s => s.replace(/[\\/:*?"<>|_]+/g, ' ').replace(/\s+/g, ' ').replace(/^[\s\-–—.,;]+|[\s\-–—.,;]+$/g, '').trim();
+  // genre : cherché d'abord en haut du document
+  let type = '', motif = null;
+  for (const [re, nom] of SC.TYPES) if (re.test(debut)) { type = nom; motif = re; break; }
+  if (!type) for (const [re, nom] of SC.TYPES) if (re.test(t)) { type = nom; motif = re; break; }
+  // numéro juste après le mot (Facture N° 2026-118)
+  let num = '';
+  if (motif) { const m = t.match(new RegExp('(?:' + motif.source + ')[^\\n\\d]{0,14}?(?:n[°o.º]|num[ée]ro|nr\\.?|no\\.?|#)?\\s*[:.]?\\s*([A-Z]{0,4}[-/ ]?\\d[\\w\\-/.]{1,18})', 'i'));
+    if (m) { num = m[m.length - 1].replace(/[.\-/]+$/, ''); if (/^\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}$/.test(num)) num = ''; } }
+  // date
+  let date = '';
+  const dm = t.match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](20\d{2}|\d{2})\b/) || null;
+  if (dm) { const j = +dm[1], mo = +dm[2], a = dm[3].length === 2 ? 2000 + +dm[3] : +dm[3]; if (j >= 1 && j <= 31 && mo >= 1 && mo <= 12) date = `${String(j).padStart(2, '0')}-${String(mo).padStart(2, '0')}-${a}`; }
+  if (!date) { const dl = t.match(/\b(\d{1,2})\s+([a-zéûè]+)\s+(20\d{2})\b/i); if (dl && SC.MOIS[dl[2].toLowerCase()]) date = `${String(+dl[1]).padStart(2, '0')}-${String(SC.MOIS[dl[2].toLowerCase()]).padStart(2, '0')}-${dl[3]}`; }
+  // émetteur : première ligne « nom propre » du haut (pas d'adresse, pas de chiffres, pas le mot du genre)
+  const bruit = /\b(rue|avenue|av\.|chauss[ée]e|boulevard|bd|place|straat|laan|steenweg|t[ée]l|tel\.|gsm|fax|e-?mail|www|http|tva|btw|iban|bic|bce|kbo|page|date|client|total|montant|objet)\b|@|\d{3,}/i;
+  let qui = '';
+  for (const l0 of lignes.slice(0, 10)) {
+    for (const l of l0.split(/\s[—–|\-]\s|,/)) { const s = propre(l);
+      if (s.length < 3 || s.length > 38 || bruit.test(s) || (motif && motif.test(s))) continue;
+      const lettres = (s.match(/[A-Za-zÀ-ÿ]/g) || []).length; if (lettres / s.length < .7 || s.split(' ').length > 5) continue;
+      qui = s; break; }
+    if (qui) break;
+  }
+  if (qui === qui.toUpperCase() && qui.length > 3) qui = qui.toLowerCase().replace(/(^|\s|-)\S/g, c => c.toUpperCase());
+  // courrier : la ligne « Objet : … »
+  const obj = t.match(/(?:^|\n)\s*(?:objet|concerne|betreft|subject)\s*:\s*([^\n]{3,60})/i);
+  let titre = '';
+  if (type && qui && qui.toLowerCase().startsWith(type.toLowerCase())) titre = qui;
+  else if (type) titre = [type + (num ? ' ' + num : ''), qui, date].filter(Boolean).join(' – ');
+  else if (obj) titre = [propre(obj[1]), qui].filter(Boolean).join(' – ');
+  else {   // pas de genre reconnu : la première vraie ligne de titre
+    const tl = lignes.slice(0, 8).map(propre).find(s => s.length >= 4 && s.length <= 60 && (s.match(/[A-Za-zÀ-ÿ]/g) || []).length / s.length > .6);
+    if (tl) titre = tl.length > 50 ? tl.slice(0, 50).replace(/\s\S*$/, '') + '…' : tl;
+  }
+  titre = propre(titre).slice(0, 80);
+  return titre;
+};
+
 /* ---------- PDF (sans bibliothèque) : une image JPEG par page ---------- */
 SC.pdf = pages => {   // pages : [{ jpg: Uint8Array, w, h }]
   const te = s => new TextEncoder().encode(s), parts = [], offs = []; let len = 0;
@@ -499,6 +572,7 @@ async function renderPage(p) {
   const s = p.src, sd = s.getContext('2d').getImageData(0, 0, s.width, s.height).data;
   const [W, H] = SC.outSize(p.q, Q().out);
   const px = SC.warp(sd, s.width, s.height, p.q, W, H);
+  p.txt = undefined;
   const mk = JSON.stringify(p.q) + p.rot; if (p.miniK !== mk) { p.mini = null; p.miniK = mk; }
   SC.filter(px, W, H, p.f, p.adj);
   const c = document.createElement('canvas'), r = p.rot & 3; c.width = r & 1 ? H : W; c.height = r & 1 ? W : H;
@@ -646,7 +720,8 @@ E('scSave').onclick = async () => {
     { v: 'jpg', ico: '🖼', cls: 'b', label: PAGES.length > 1 ? 'Photos' : 'Photo', sub: PAGES.length > 1 ? 'Une image par page' : 'Une image JPEG' }
   ]);
   if (!fmt) return;
-  let name = await ask({ title: 'Nom du document', input: 'Scan ' + stamp(), ok: 'Enregistrer' });
+  const sug = await titreDoc(); busy();
+  let name = await ask({ title: 'Nom du document', input: sug, ok: 'Enregistrer' });
   if (name === null) return; name = (name || '').trim().replace(/[\\/:*?"<>|]/g, '-') || 'Scan ' + stamp();
   busy('Chiffrement dans le coffre…'); await tick();
   try {
@@ -677,12 +752,25 @@ async function partager(bytes, name, type) {
   const u = URL.createObjectURL(f), a = document.createElement('a'); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 60000);
   return true;
 }
-async function lireTexte() {
-  if (!window.ocrPages || (window.nPrefs && !window.nPrefs().ocr)) return '';
-  busy('Préparation de la lecture du texte…'); await tick();
-  const t = await window.ocrPages(PAGES.map(p => p.out), (i, n) => busy(i < 0 ? 'Préparation de la lecture du texte…' : `Lecture du texte… page ${i}/${n}`));
-  return t.map((x, i) => (PAGES.length > 1 && x ? `— Page ${i + 1} —\n` : '') + x).filter(Boolean).join('\n\n');
+async function lireTexte(force, seule) {
+  if (!window.ocrPages || (!force && window.nPrefs && !window.nPrefs().ocr)) return '';
+  const L = seule ? [PAGES[0]] : PAGES, aLire = L.filter(p => p.txt === undefined);
+  if (aLire.length) {
+    busy(seule ? 'Lecture du titre…' : 'Préparation de la lecture du texte…'); await tick();
+    const t = await window.ocrPages(aLire.map(p => p.out), (i, n) => busy(i < 0 ? 'Préparation de la lecture du texte…' : seule ? 'Lecture du titre…' : `Lecture du texte… page ${i}/${n}`));
+    aLire.forEach((p, i) => p.txt = t[i] || '');
+  }
+  return L.map((p, i) => (PAGES.length > 1 && p.txt ? `— Page ${i + 1} —\n` : '') + p.txt).filter(Boolean).join('\n\n');
 }
+// nom du scan : titre lu dans le document (réglage « Automatique »), sinon préfixe + date
+const nomAuto = () => !window.nPrefs || window.nPrefs().nomAuto !== false;
+const prefixe = () => (window.nPrefs && window.nPrefs().nomScan) || 'Scan';
+async function titreDoc() {
+  let ti = '';
+  if (nomAuto()) { try { ti = SC.titre(await lireTexte(true, true)); } catch (e) { console.warn(e); } }
+  return ti || prefixe() + ' ' + stamp();
+}
+window.scanTitre = SC.titre;
 window.scanPartager = partager;
 const pageMini = c => { const W = 132, H = 168, m = document.createElement('canvas'); m.width = W; m.height = H; const g = m.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); const k = W / c.width; g.drawImage(c, 0, 0, W, c.height * k); return m.toDataURL('image/jpeg', .8); };   // haut de la 1re page, comme une vignette de document
 async function saveNote() {
@@ -697,14 +785,14 @@ async function saveNote() {
   if (!v) return;
   try {
     if (v === 'pdf') {
-      let name = await ask({ title: 'Nom du PDF', input: 'Scan ' + stamp(), ok: 'Partager' }); if (name === null) return;
+      let name = nomAuto() ? await titreDoc() : await ask({ title: 'Nom du PDF', input: prefixe() + ' ' + stamp(), ok: 'Partager' }); busy(); if (name === null) return;
       name = (name || '').trim().replace(/[\\/:*?"<>|]/g, '-') || 'Scan ' + stamp();
       busy('Création du PDF…'); await tick(); const b = await pdfOf(); busy();
       await partager(b, /\.pdf$/i.test(name) ? name : name + '.pdf', 'application/pdf'); return;
     }
     if (v === 'jpg') {
       busy('Préparation…'); await tick();
-      const files = []; for (let i = 0; i < n; i++) files.push(new File([await jpg(PAGES[i].out)], `Scan ${stamp()}${n > 1 ? ` (${i + 1})` : ''}.jpg`, { type: 'image/jpeg' }));
+      const files = []; for (let i = 0; i < n; i++) files.push(new File([await jpg(PAGES[i].out)], `${(PAGES[0].txt && SC.titre(PAGES[0].txt)) || prefixe() + ' ' + stamp()}${n > 1 ? ` (${i + 1})` : ''}.jpg`, { type: 'image/jpeg' }));
       busy();
       try { if (navigator.canShare && navigator.canShare({ files })) { await navigator.share({ files }); return; } } catch (e) { if (e.name === 'AbortError') return; }
       for (const f of files) await partager(f, f.name, f.type); return;
@@ -716,23 +804,27 @@ async function saveNote() {
       return;
     }
     // note : PDF joint + texte reconnu
-    const pre = (window.nPrefs && window.nPrefs().nomScan) || 'Scan';
-    let name = curNote ? (curNote.title || pre) : await ask({ title: 'Nom de la note', input: pre + ' ' + stamp(), ok: 'Créer' });
-    if (name === null) return; name = (name || '').trim() || 'Scan ' + stamp();
+    let name = null;
+    if (!nomAuto() && !curNote) { name = await ask({ title: 'Nom de la note', input: prefixe() + ' ' + stamp(), ok: 'Créer' }); if (name === null) return; }
     const drive = window.scanDrivePret ? window.scanDrivePret() : null;   // connexion Google demandée tout de suite (le toucher le permet)
+    let texte = ''; try { texte = await lireTexte(); } catch (e) { console.warn(e); }
+    let doc = '';   // titre du document lu dans le texte
+    if (nomAuto()) { try { doc = SC.titre(texte || await lireTexte(true, true)); } catch (e) {} }
+    if (name === null) name = curNote ? (curNote.title || doc || prefixe()) : (doc || prefixe() + ' ' + stamp());
+    name = (name || '').trim() || prefixe() + ' ' + stamp();
+    const pdfNom = curNote ? (doc || name + ' ' + stamp()) : name;
     busy('Création du PDF…'); await tick();
     const bytes = await pdfOf(), id = 'ns' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-    let texte = ''; try { texte = await lireTexte(); } catch (e) { console.warn(e); }
     busy('Enregistrement…'); await tick();
     await mset('nscan:' + id, bytes.buffer);
-    const pj = { id, name: (name.replace(/[\\/:*?"<>|]/g, '-')) + '.pdf', pages: n, size: bytes.length, thumb: pageMini(PAGES[0].out), at: Date.now() };
+    const pj = { id, name: (pdfNom.replace(/[\\/:*?"<>|]/g, '-')) + '.pdf', pages: n, size: bytes.length, thumb: pageMini(PAGES[0].out), at: Date.now() };
     let note = curNote;
     if (!note) { note = { id: 'n' + Date.now().toString(36), title: name, txt: '', upd: Date.now() }; NOTES.push(note); }
     note.scans = (note.scans || []).concat(pj);
     if (texte) note.txt = (note.txt ? note.txt.replace(/\s+$/, '') + '\n\n' : '') + texte;
     note.upd = Date.now(); await nSave();
     const nn = note; scanClose(true); busy(); noteEdit(nn);
-    toast(texte ? `Scan ajouté avec son texte (${n} page${pl}) ✓` : `Scan ajouté (${n} page${pl}) ✓`, 2600);
+    toast(`« ${pj.name.replace(/\.pdf$/, '')} » ajouté${texte ? ' avec son texte' : ''} ✓`, 3000);
     if (window.scanExporter) window.scanExporter(bytes, pj, nn, drive);   // téléphone (PDF) + Google Drive, en arrière-plan
   } catch (e) { console.warn(e); busy(); toast('Impossible : mémoire pleine ?', 3000); }
 }
