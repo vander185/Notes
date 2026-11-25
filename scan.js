@@ -310,6 +310,7 @@ let DEST = 'vault';   // 'vault' : caché dans le coffre ; 'note' : bloc-notes, 
 let PAGES = [], CUR = 0, FILT = 'auto', AUTO = true, stream = null, track = null, loop = null, torch = false;
 let lastQ = null, stable = 0, cool = 0, need = null, open = false, cropIdx = -1, cropQ = null, cropSrc = null, cropNew = false;
 try { const s = localStorage.getItem('scanPrefs'); if (s) { const o = JSON.parse(s); FILT = o.f || FILT; AUTO = o.a !== false; } } catch (e) {}
+window.scanPrefsRelire = () => { try { const o = JSON.parse(localStorage.getItem('scanPrefs') || '{}'); FILT = o.f || 'auto'; AUTO = o.a !== false; } catch (e) {} };
 const savePrefs = () => { try { localStorage.setItem('scanPrefs', JSON.stringify({ f: FILT, a: AUTO })); } catch (e) {} };
 const small = document.createElement('canvas'), sctx = small.getContext('2d', { willReadFrequently: true });
 
@@ -558,7 +559,7 @@ async function partager(bytes, name, type) {
   return true;
 }
 async function lireTexte() {
-  if (!window.ocrPages) return '';
+  if (!window.ocrPages || (window.nPrefs && !window.nPrefs().ocr)) return '';
   busy('Préparation de la lecture du texte…'); await tick();
   const t = await window.ocrPages(PAGES.map(p => p.out), (i, n) => busy(i < 0 ? 'Préparation de la lecture du texte…' : `Lecture du texte… page ${i}/${n}`));
   return t.map((x, i) => (PAGES.length > 1 && x ? `— Page ${i + 1} —\n` : '') + x).filter(Boolean).join('\n\n');
@@ -596,7 +597,8 @@ async function saveNote() {
       return;
     }
     // note : PDF joint + texte reconnu
-    let name = curNote ? (curNote.title || 'Scan') : await ask({ title: 'Nom de la note', input: 'Scan ' + stamp(), ok: 'Créer' });
+    const pre = (window.nPrefs && window.nPrefs().nomScan) || 'Scan';
+    let name = curNote ? (curNote.title || pre) : await ask({ title: 'Nom de la note', input: pre + ' ' + stamp(), ok: 'Créer' });
     if (name === null) return; name = (name || '').trim() || 'Scan ' + stamp();
     const drive = window.scanDrivePret ? window.scanDrivePret() : null;   // connexion Google demandée tout de suite (le toucher le permet)
     busy('Création du PDF…'); await tick();

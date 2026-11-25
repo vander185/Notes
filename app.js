@@ -258,7 +258,8 @@ async function notesLoad() {
   NOTES = NOTES.filter(n => !n.src || !nFull(n) || (seen.has(nFull(n)) ? false : (seen.add(nFull(n)), true)));
   if (ch || NOTES.length !== before) await mset('notes', NOTES);
   DOSSIERS = (await mget('nfolders')) || [];
-  const vieux = NOTES.filter(n => n.del && Date.now() - n.del > 30 * 864e5);   // corbeille : 30 jours
+  const jours = (window.nPrefs && nPrefs().corbeille) || 30;
+  const vieux = NOTES.filter(n => n.del && Date.now() - n.del > jours * 864e5);   // corbeille : 30 jours
   if (vieux.length) { NOTES = NOTES.filter(n => !vieux.includes(n)); for (const n of vieux) pjSuppr(n.scans); await mset('notes', NOTES); }
 }
 const nSave = () => mset('notes', NOTES);
@@ -312,7 +313,7 @@ function noteEdit(n) {
 $('#nlist').addEventListener('click', async e => {
   const b = e.target.closest('.ni'); if (!b) return; const n = NOTES.find(x => x.id === b.dataset.id); if (!n) return;
   if (!n.del) return noteEdit(n);
-  const j = Math.max(1, 30 - Math.floor((Date.now() - n.del) / 864e5));
+  const j = Math.max(1, ((window.nPrefs && nPrefs().corbeille) || 30) - Math.floor((Date.now() - n.del) / 864e5));
   const v = await sheet((n.title || 'Note supprimée') + ` · encore ${j} jour${j > 1 ? 's' : ''}`, [
     { v: 'back', ico: '↩️', cls: 'g', label: 'Récupérer la note', sub: n.folder ? 'Retourne dans « ' + n.folder + ' »' : 'Retourne dans Notes' },
     { v: 'kill', ico: '🗑️', dg: 1, label: 'Supprimer définitivement' }
@@ -347,6 +348,7 @@ $('#nmenu').onclick = async () => {
 $('#ndel').onclick = async () => {
   if (!curNote) return;
   if (nVide(curNote)) { NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave(); return; }
+  if (!(await nConfirmer())) return;
   const n = curNote; n.del = Date.now(); n.pin = false; curNote = null; notesDraw(); show('notes'); await nSave();
   toast('Note mise dans « Récemment supprimées »', 2400);
 };
@@ -525,8 +527,22 @@ async function docVoir(p, n) {
   $('#dsearch').addEventListener('input', docsDraw);
   $('#dgrid').onclick = e => { const b = e.target.closest('.dc'); if (!b) return; const n = NOTES.find(x => x.id === b.dataset.n), p = n && (n.scans || []).find(x => x.id === b.dataset.pj); if (p) docVoir(p, n); };
   $('#dscan').onclick = () => { curNote = null; window.scanOpen && scanOpen('note'); };
-  $('#dset').onclick = () => scanReglages();
+  $('#dset').onclick = () => window.reglagesOuvrir ? window.reglagesOuvrir() : scanReglages();
 })();
+window.SEXPget = SEXP; window.SEXPset = SEXPset; window.nAuthPub = nAuth;
+window.NOTES_N = () => ({ notes: NOTES.filter(n => !n.del).length, del: NOTES.filter(n => n.del).length, docs: tousScans().length });
+window.nVue = v => { nView = v; notesDraw(); };
+window.nTri = v => { nSort = v; notesDraw(); };
+window.dossiersOuvrir = () => { dossiersDraw(); show('nfold'); };
+window.corbeilleVider = async () => { if (await sheet('Vider la corbeille ?', [{ v: 'ok', dg: 1, label: 'Tout supprimer définitivement' }]) !== 'ok') return; const L = NOTES.filter(n => n.del); for (const n of L) await pjSuppr(n.scans); NOTES = NOTES.filter(n => !n.del); await nSave(); toast('Corbeille vidée'); };
+window.notesExporter = () => {
+  const L = NOTES.filter(n => !n.del); if (!L.length) return toast('Aucune note à exporter');
+  const t = L.map(n => '# ' + ((n.title || '').trim() || 'Sans titre') + (n.folder ? '  [' + n.folder + ']' : '') + '\n' + new Date(n.upd).toLocaleString('fr-BE') + '\n\n' + (n.txt || '')).join('\n\n────────────────────\n\n');
+  const nom = 'Mes notes ' + new Date().toISOString().slice(0, 10) + '.txt', f = new File([t], nom, { type: 'text/plain' });
+  (async () => { try { if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: nom }); return; } } catch (e) { if (e.name === 'AbortError') return; }
+    const u = URL.createObjectURL(f), a = document.createElement('a'); a.href = u; a.download = nom; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 60000); toast('Notes exportées dans Téléchargements'); })();
+};
+const nConfirmer = async () => !(window.nPrefs && nPrefs().confirm) || await sheet('Supprimer cette note ?', [{ v: 'ok', dg: 1, label: 'Mettre à la corbeille', sub: 'Récupérable pendant ' + nPrefs().corbeille + ' jours' }]) === 'ok';
 async function scanReglages() {
   const p = SEXP(), ck = b => b ? '  ✓' : '', att = tousScans().filter(x => x.p.dwait);
   const v = await sheet('Enregistrement des scans', [
@@ -587,7 +603,7 @@ $('#nchips').addEventListener('click', async e => {
       e.stopPropagation(); const n = NOTES.find(x => x.id === a.closest('.sw').dataset.id); fermer(); if (!n) return;
       if (a.dataset.a === 'pin') { n.pin = !n.pin; await nSave(); notesDraw(); toast(n.pin ? 'Note épinglée' : 'Note désépinglée'); }
       if (a.dataset.a === 'move') { const d = await choisirDossier(n.folder); if (d !== null) { if (d) n.folder = d; else delete n.folder; await nSave(); notesDraw(); toast(d ? 'Rangée dans « ' + d + ' »' : 'Sortie du dossier'); } }
-      if (a.dataset.a === 'del') { n.del = Date.now(); n.pin = false; await nSave(); notesDraw(); toast('Note mise dans « Supprimées »'); }
+      if (a.dataset.a === 'del') { if (!(await nConfirmer())) return; n.del = Date.now(); n.pin = false; await nSave(); notesDraw(); toast('Note mise dans « Supprimées »'); }
       return;
     }
     const b = e.target.closest('.ni');
