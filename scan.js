@@ -135,39 +135,100 @@ SC.warp = (src, sw, sh, q, W, H) => {
   }
   return out;
 };
-// Filtres : 'auto' (couleur améliorée), 'bw' (noir & blanc), 'gray', 'orig'
-SC.filter = (d, w, h, mode) => {
-  if (mode === 'orig') return;
-  // carte d'éclairage : maximum local par bloc, élargi puis lissé → fond blanc uniforme, ombres effacées
+// Filtres : auto, doc, vif, photo, tableau, bw, encre, gray, eco, sepia, orig — puis réglages fins et netteté
+SC.FILTRES = [
+  ['auto', 'Auto couleur'], ['doc', 'Document'], ['vif', 'Couleurs vives'], ['photo', 'Photo'], ['tableau', 'Tableau blanc'],
+  ['bw', 'Noir & blanc'], ['encre', 'Texte net'], ['gray', 'Gris'], ['eco', 'Éco encre'], ['sepia', 'Ancien'], ['orig', 'Original']
+];
+SC.illum = (d, w, h) => {   // carte d'éclairage : maximum local par bloc, élargi puis lissé
   const S = Math.max(8, Math.round(Math.max(w, h) / 90)), bw = Math.ceil(w / S), bh = Math.ceil(h / S);
   let m = new Float32Array(bw * bh);
   for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) {
-    let mx = 0; const y1 = Math.min(h, (by + 1) * S), x1 = Math.min(w, (bx + 1) * S);
-    for (let y = by * S; y < y1; y += 2) for (let x = bx * S; x < x1; x += 2) { const i = (y * w + x) * 4, l = d[i] * .299 + d[i + 1] * .587 + d[i + 2] * .114; if (l > mx) mx = l; }
+    let mx = 0; const y1 = Math.min(h, (by + 1) * S), x1 = Math.min(w, (bx + 1) * S), st = S > 12 ? 2 : 1;
+    for (let y = by * S; y < y1; y += st) for (let x = bx * S; x < x1; x += st) { const i = (y * w + x) * 4, l = d[i] * .299 + d[i + 1] * .587 + d[i + 2] * .114; if (l > mx) mx = l; }
     m[by * bw + bx] = mx;
   }
   for (let it = 0; it < 2; it++) { const o = new Float32Array(m.length);
     for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) { let mx = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy >= 0 && yy < bh && xx >= 0 && xx < bw && m[yy * bw + xx] > mx) mx = m[yy * bw + xx]; } o[y * bw + x] = mx; }
     m = o; }
   m = SC.blur(m, bw, bh, 2);
-  const ill = (x, y) => { const fx = Math.max(0, Math.min(bw - 1.001, x / S - .5)), fy = Math.max(0, Math.min(bh - 1.001, y / S - .5)), x0 = fx | 0, y0 = fy | 0, ax = fx - x0, ay = fy - y0, x1 = Math.min(bw - 1, x0 + 1), y1 = Math.min(bh - 1, y0 + 1);
+  // carte pleine résolution par ligne (interpolation bilinéaire)
+  return (x, y) => { const fx = Math.max(0, Math.min(bw - 1.001, x / S - .5)), fy = Math.max(0, Math.min(bh - 1.001, y / S - .5)), x0 = fx | 0, y0 = fy | 0, ax = fx - x0, ay = fy - y0, x1 = Math.min(bw - 1, x0 + 1), y1 = Math.min(bh - 1, y0 + 1);
     return (m[y0 * bw + x0] * (1 - ax) + m[y0 * bw + x1] * ax) * (1 - ay) + (m[y1 * bw + x0] * (1 - ax) + m[y1 * bw + x1] * ax) * ay; };
-  const cl = v => v < 0 ? 0 : v > 255 ? 255 : v;
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const i = (y * w + x) * 4, k = 255 / Math.max(48, ill(x, y));
-    let r = d[i] * k, g = d[i + 1] * k, b = d[i + 2] * k;
-    if (mode === 'auto') {
-      const l = r * .299 + g * .587 + b * .114, sat = 1.25;
-      r = l + (r - l) * sat; g = l + (g - l) * sat; b = l + (b - l) * sat;
-      const c = v => { v = (v - 28) * 1.13; return v > 236 ? 255 : v; };   // noirs plus noirs, papier bien blanc
-      d[i] = cl(c(r)); d[i + 1] = cl(c(g)); d[i + 2] = cl(c(b));
-    } else {
-      let l = r * .299 + g * .587 + b * .114;
-      if (mode === 'bw') { const t = Math.max(0, Math.min(1, (l - 120) / 85)); l = 255 * t * t * (3 - 2 * t); }
-      else { l = (l - 22) * 1.12; if (l > 238) l = 255; }
-      d[i] = d[i + 1] = d[i + 2] = cl(l);
+};
+SC.boxMean = (g, w, h, r) => {   // moyenne locale par image intégrale
+  const I = new Float64Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++) { let s = 0; for (let x = 0; x < w; x++) { s += g[y * w + x]; I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + s; } }
+  const o = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) { const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+    for (let x = 0; x < w; x++) { const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
+      o[y * w + x] = (I[y1 * (w + 1) + x1] - I[y0 * (w + 1) + x1] - I[y1 * (w + 1) + x0] + I[y0 * (w + 1) + x0]) / ((x1 - x0) * (y1 - y0)); } }
+  return o;
+};
+SC.sharpen = (d, w, h, amt) => {   // masque flou (unsharp) sur les 3 canaux
+  if (amt <= 0 || w < 3 || h < 3) return;
+  const n = w * h, ch = new Float32Array(n);
+  for (let c = 0; c < 3; c++) {
+    for (let i = 0; i < n; i++) ch[i] = d[i * 4 + c];
+    const b = SC.blur(ch, w, h, 1);
+    for (let i = 0; i < n; i++) { const v = ch[i] + (ch[i] - b[i]) * amt; d[i * 4 + c] = v < 0 ? 0 : v > 255 ? 255 : v; }
+  }
+};
+SC.NET = { auto: .55, doc: .7, vif: .5, photo: .35, tableau: .6, bw: .5, encre: 0, gray: .6, eco: .4, sepia: .3, orig: 0 };
+SC.filter = (d, w, h, mode, adj) => {
+  adj = adj || {};
+  const cl = v => v < 0 ? 0 : v > 255 ? 255 : v, n = w * h;
+  if (mode !== 'orig') {
+    const flat = mode !== 'photo' && mode !== 'sepia';
+    const ill = flat ? SC.illum(d, w, h) : null;
+    // niveaux automatiques (photo / ancien) : 1 % et 99 %
+    let lo = 0, hi = 255;
+    if (!flat) { const hs = new Uint32Array(256); for (let i = 0; i < n; i += 3) hs[(d[i * 4] * .299 + d[i * 4 + 1] * .587 + d[i * 4 + 2] * .114) | 0]++;
+      const tot = Math.ceil(n / 3); let a = 0; for (lo = 0; lo < 255 && (a += hs[lo]) < tot * .01; lo++); a = 0; for (hi = 255; hi > 0 && (a += hs[hi]) < tot * .01; hi--); if (hi - lo < 40) { lo = 0; hi = 255; } }
+    // balance des blancs : la couleur moyenne du papier devient blanc neutre (papier jauni, lumière chaude)
+    let gr = 1, gg = 1, gb = 1;
+    if (flat && mode !== 'bw' && mode !== 'gray' && mode !== 'encre' && mode !== 'eco') {
+      let sr = 0, sg = 0, sb = 0, c = 0; const st = Math.max(1, Math.round(Math.sqrt(n / 40000)));
+      for (let y = 0; y < h; y += st) for (let x = 0; x < w; x += st) { const i = (y * w + x) * 4, k = 255 / Math.max(48, ill(x, y)), r = d[i] * k, g = d[i + 1] * k, b = d[i + 2] * k; if (r * .299 + g * .587 + b * .114 > 225) { sr += r; sg += g; sb += b; c++; } }
+      if (c > 50) { const m = (sr + sg + sb) / 3 / c; gr = Math.min(1.35, m / (sr / c)); gg = Math.min(1.35, m / (sg / c)); gb = Math.min(1.35, m / (sb / c)); }
+    }
+    let L = null; if (mode === 'encre') L = new Float32Array(n);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4, k = flat ? 255 / Math.max(48, ill(x, y)) : 255 / (hi - lo), o = flat ? 0 : lo;
+      let r = (d[i] - o) * k * gr, g = (d[i + 1] - o) * k * gg, b = (d[i + 2] - o) * k * gb;
+      const l = r * .299 + g * .587 + b * .114;
+      if (mode === 'auto' || mode === 'vif' || mode === 'doc' || mode === 'tableau') {
+        const fade = l > 200 ? Math.max(0, 1 - (l - 200) / 40) : 1;   // papier : on retire la couleur parasite
+        const sat = 1 + ({ auto: .25, vif: .7, doc: .1, tableau: .9 }[mode]) * fade - (mode === 'doc' ? (1 - fade) : (1 - fade) * .6);
+        r = l + (r - l) * sat; g = l + (g - l) * sat; b = l + (b - l) * sat;
+        const [bl, ct, wp] = { auto: [28, 1.13, 230], vif: [24, 1.12, 238], doc: [40, 1.22, 226], tableau: [30, 1.25, 215] }[mode];
+        const c = v => { v = (v - bl) * ct; return v > wp ? 255 : v; };
+        d[i] = cl(c(r)); d[i + 1] = cl(c(g)); d[i + 2] = cl(c(b));
+      } else if (mode === 'photo') {
+        const sat = 1.12; d[i] = cl(l + (r - l) * sat); d[i + 1] = cl(l + (g - l) * sat); d[i + 2] = cl(l + (b - l) * sat);
+      } else if (mode === 'sepia') {
+        const v = cl(l * 1.05); d[i] = cl(v * .95 + 28); d[i + 1] = cl(v * .82 + 22); d[i + 2] = cl(v * .62 + 12);
+      } else if (mode === 'eco') {
+        let v = (l - 30) * 1.1; v = v > 225 ? 255 : 255 - (255 - cl(v)) * .55; d[i] = d[i + 1] = d[i + 2] = cl(v);
+      } else if (mode === 'encre') { L[y * w + x] = cl(l); }
+      else {
+        let v = l;
+        if (mode === 'bw') { const t = Math.max(0, Math.min(1, (v - 120) / 85)); v = 255 * t * t * (3 - 2 * t); }
+        else { v = (v - 22) * 1.12; if (v > 238) v = 255; }
+        d[i] = d[i + 1] = d[i + 2] = cl(v);
+      }
+    }
+    if (mode === 'encre') {   // seuil adaptatif local (texte très net, fond pur)
+      const M = SC.boxMean(L, w, h, Math.max(6, Math.round(Math.max(w, h) / 70)));
+      for (let j = 0; j < n; j++) { const t = (L[j] - (M[j] - 14)) / 10, v = t <= 0 ? 0 : t >= 1 ? 255 : 255 * t; const v2 = L[j] > 200 ? 255 : v; d[j * 4] = d[j * 4 + 1] = d[j * 4 + 2] = v2; }
     }
   }
+  // réglages fins : luminosité / contraste (-50..50)
+  const bri = (adj.b || 0) * 1.6, con = 1 + (adj.c || 0) / 60;
+  if (bri || con !== 1) for (let j = 0; j < n * 4; j += 4) for (let c = 0; c < 3; c++) d[j + c] = cl((d[j + c] - 128) * con + 128 + bri);
+  // netteté : par filtre, plus le réglage (0..100, 50 = normal)
+  const net = (SC.NET[mode] || 0) * ((adj.s == null ? 50 : adj.s) / 50);
+  if (net > 0.02) SC.sharpen(d, w, h, net);
 };
 
 /* ---------- PDF (sans bibliothèque) : une image JPEG par page ---------- */
@@ -257,9 +318,24 @@ const css = `
 #scRev .sl{flex:0 0 100%;scroll-snap-align:center;display:flex;align-items:center;justify-content:center;padding:10px 22px;position:relative}
 #scRev .sl img{max-width:100%;max-height:100%;box-shadow:0 10px 30px #000c;border-radius:3px;background:#fff}
 #scRev .sl .wait{position:absolute;color:#aaa;font-size:14px}
-#scRev .filt{display:flex;gap:8px;overflow-x:auto;padding:8px 14px;scrollbar-width:none}
-#scRev .filt button{flex:0 0 auto;padding:7px 13px;border-radius:16px;background:#ffffff12;font-size:13px;font-weight:600;color:#ddd}
-#scRev .filt button.on{background:#d9b25a33;color:var(--gold2);box-shadow:inset 0 0 0 1px #d9b25a88}
+#scRev .filt{display:flex;gap:10px;overflow-x:auto;padding:10px 14px 6px;scrollbar-width:none}
+#scRev .filt::-webkit-scrollbar{display:none}
+#scRev .filt button{flex:0 0 auto;width:64px;display:flex;flex-direction:column;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#bbb;background:none;padding:0}
+#scRev .filt button i{display:block;width:58px;height:72px;border-radius:10px;overflow:hidden;background:#2a2a2e;box-shadow:0 0 0 1px #ffffff1f;transition:transform .15s,box-shadow .15s}
+#scRev .filt button i img{width:100%;height:100%;object-fit:cover;display:block}
+#scRev .filt button.on{color:#fff}
+#scRev .filt button.on i{box-shadow:0 0 0 2.5px var(--acc,#e5b400),0 6px 16px #0008;transform:translateY(-2px)}
+#scRev .filt button.all i{display:grid;place-items:center;font-style:normal;font-size:22px;background:#ffffff10;color:var(--acc,#e5b400)}
+#scRev .filt button span{white-space:nowrap;max-width:64px;overflow:hidden;text-overflow:ellipsis}
+#scAdj{display:none;padding:6px 18px 4px;gap:4px;flex-direction:column}
+#scAdj.on{display:flex}
+#scAdj label{display:flex;align-items:center;gap:12px;font-size:13px;color:#ccc}
+#scAdj label b{width:86px;font-weight:600}
+#scAdj label em{width:30px;text-align:right;font-style:normal;color:#888;font-variant-numeric:tabular-nums}
+#scAdj input{flex:1;accent-color:var(--acc,#e5b400);height:28px}
+#scAdj .ar{display:flex;gap:8px;justify-content:flex-end;padding-top:2px}
+#scAdj .ar button{padding:6px 12px;border-radius:14px;background:#ffffff14;font-size:12.5px;font-weight:600;color:#ddd}
+#scRev .tools button.on{color:var(--acc,#e5b400)}
 #scRev .thumbs{display:flex;gap:8px;overflow-x:auto;padding:6px 14px 8px;scrollbar-width:none}
 #scRev .thumbs button{flex:0 0 auto;width:46px;height:60px;border-radius:6px;overflow:hidden;position:relative;background:#222;box-shadow:0 0 0 1px #ffffff22}
 #scRev .thumbs button.on{box-shadow:0 0 0 2.5px var(--gold2)}
@@ -291,9 +367,10 @@ const html = `
 <div class="pane hide" id="scRev">
   <div class="stop"><button class="gb" id="scRevBack">‹ Caméra</button><h3 id="scRevT">1 page</h3><button class="gb p" id="scSave">Enregistrer</button></div>
   <div class="stage" id="scStrip"></div>
-  <div class="filt" id="scFilt"><button data-f="auto">✨ Auto couleur</button><button data-f="bw">Noir & blanc</button><button data-f="gray">Gris</button><button data-f="orig">Original</button></div>
+  <div class="filt" id="scFilt"></div>
+  <div id="scAdj"><label><b>Luminosité</b><input type="range" min="-50" max="50" value="0" data-k="b"><em>0</em></label><label><b>Contraste</b><input type="range" min="-50" max="50" value="0" data-k="c"><em>0</em></label><label><b>Netteté</b><input type="range" min="0" max="100" value="50" data-k="s"><em>50</em></label><div class="ar"><button id="scAdjAll">Appliquer à toutes les pages</button><button id="scAdj0">Réinitialiser</button></div></div>
   <div class="thumbs" id="scThumbs"></div>
-  <div class="tools"><button id="scTCrop"><b>⌗</b>Recadrer</button><button id="scTRot"><b>↻</b>Pivoter</button><button id="scTL"><b>‹</b>Avant</button><button id="scTR"><b>›</b>Après</button><button id="scTDel" class="dg"><b>🗑</b>Supprimer</button></div>
+  <div class="tools"><button id="scTCrop"><b>⌗</b>Recadrer</button><button id="scTAdj"><b>🎚</b>Ajuster</button><button id="scTRot"><b>↻</b>Pivoter</button><button id="scTL"><b>‹</b>Avant</button><button id="scTR"><b>›</b>Après</button><button id="scTDel" class="dg"><b>🗑</b>Supprimer</button></div>
 </div>
 <div id="scBusy"><i></i><span id="scBusyT">Traitement…</span></div>
 <input type="file" id="scIn" accept="image/*" multiple hidden>`;
@@ -307,11 +384,13 @@ const tick = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)
 
 /* ---------- État ---------- */
 let DEST = 'vault';   // 'vault' : caché dans le coffre ; 'note' : bloc-notes, comme Adobe Scan
-let PAGES = [], CUR = 0, FILT = 'auto', AUTO = true, stream = null, track = null, loop = null, torch = false;
+let QUAL = 'haute', PAGES = [], CUR = 0, FILT = 'auto', AUTO = true, stream = null, track = null, loop = null, torch = false;
 let lastQ = null, stable = 0, cool = 0, need = null, open = false, cropIdx = -1, cropQ = null, cropSrc = null, cropNew = false;
-try { const s = localStorage.getItem('scanPrefs'); if (s) { const o = JSON.parse(s); FILT = o.f || FILT; AUTO = o.a !== false; } } catch (e) {}
-window.scanPrefsRelire = () => { try { const o = JSON.parse(localStorage.getItem('scanPrefs') || '{}'); FILT = o.f || 'auto'; AUTO = o.a !== false; } catch (e) {} };
-const savePrefs = () => { try { localStorage.setItem('scanPrefs', JSON.stringify({ f: FILT, a: AUTO })); } catch (e) {} };
+const QUALS = { std: { cap: 2400, out: 2000, jq: .82 }, haute: { cap: 3400, out: 2800, jq: .9 }, max: { cap: 4400, out: 3800, jq: .94 } };
+const Q = () => QUALS[QUAL] || QUALS.haute;
+window.scanPrefsRelire = () => { try { const o = JSON.parse(localStorage.getItem('scanPrefs') || '{}'); FILT = o.f || 'auto'; AUTO = o.a !== false; QUAL = o.q || 'haute'; } catch (e) {} };
+scanPrefsRelire();
+const savePrefs = () => { try { const o = JSON.parse(localStorage.getItem('scanPrefs') || '{}'); o.f = FILT; o.a = AUTO; localStorage.setItem('scanPrefs', JSON.stringify(o)); } catch (e) {} };
 const small = document.createElement('canvas'), sctx = small.getContext('2d', { willReadFrequently: true });
 
 function detectOn(src, sw, sh) {   // renvoie un quadrilatère en coordonnées de la source
@@ -380,21 +459,31 @@ function liveDetect() {
   else hint('Touchez le bouton pour scanner', true);
   if (armed && stable >= 6) { cool = now + 1500; stable = 0; need = q; capture(); }
 }
-function toCanvas(src, w, h, cap = 3200) {
-  const k = Math.min(1, cap / Math.max(w, h)), c = document.createElement('canvas');
-  c.width = Math.round(w * k); c.height = Math.round(h * k); c.getContext('2d').drawImage(src, 0, 0, c.width, c.height); return c;
+function toCanvas(src, w, h, cap) {
+  cap = cap || Q().cap; const k = Math.min(1, cap / Math.max(w, h)), c = document.createElement('canvas');
+  c.width = Math.round(w * k); c.height = Math.round(h * k); const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0, c.width, c.height); return c;
 }
 async function capture() {
   const V = E('scV'); if (!V.videoWidth) return;
   const f = E('scFlash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
   navigator.vibrate && navigator.vibrate(30);
-  const src = toCanvas(V, V.videoWidth, V.videoHeight);
+  let src = null;
+  // photo pleine résolution du capteur quand le téléphone le permet (bien plus nette qu'une image de la vidéo)
+  if (QUAL !== 'std' && track && window.ImageCapture) {
+    try { hint('Photo en haute qualité…', true);
+      const ic = new ImageCapture(track), bl = await Promise.race([ic.takePhoto(torch ? {} : { fillLightMode: 'off' }).catch(() => ic.takePhoto()), new Promise((_, ko) => setTimeout(() => ko(new Error('lent')), 3500))]);
+      const bm = await createImageBitmap(bl, { imageOrientation: 'from-image' });
+      if (bm.width * bm.height > V.videoWidth * V.videoHeight * 1.2) src = toCanvas(bm, bm.width, bm.height);
+      bm.close && bm.close();
+    } catch (e) {}
+  }
+  if (!src) src = toCanvas(V, V.videoWidth, V.videoHeight);
   let q = null; try { q = detectOn(src, src.width, src.height); } catch (e) {}
-  if (!q && lastQ) { const k = src.width / V.videoWidth; q = lastQ.map(p => [p[0] * k, p[1] * k]); }
+  if (!q && lastQ && Math.abs(src.width / src.height - V.videoWidth / V.videoHeight) < .03) { const k = src.width / V.videoWidth; q = lastQ.map(p => [p[0] * k, p[1] * k]); }
   await addPage(src, q, !AUTO && !q);
 }
 async function addPage(src, q, wantCrop) {
-  const p = { src, q: q || inset(src.width, src.height), rot: 0, f: FILT, out: null, url: null, auto: !!q };
+  const p = { src, q: q || inset(src.width, src.height), rot: 0, f: FILT, adj: {}, out: null, url: null, auto: !!q };
   PAGES.push(p); CUR = PAGES.length - 1;
   await renderPage(p); drawPg();
   if (wantCrop) openCrop(CUR, true);
@@ -408,15 +497,16 @@ function drawPg() {
 /* ---------- Traitement d'une page ---------- */
 async function renderPage(p) {
   const s = p.src, sd = s.getContext('2d').getImageData(0, 0, s.width, s.height).data;
-  const [W, H] = SC.outSize(p.q);
+  const [W, H] = SC.outSize(p.q, Q().out);
   const px = SC.warp(sd, s.width, s.height, p.q, W, H);
-  SC.filter(px, W, H, p.f);
+  const mk = JSON.stringify(p.q) + p.rot; if (p.miniK !== mk) { p.mini = null; p.miniK = mk; }
+  SC.filter(px, W, H, p.f, p.adj);
   const c = document.createElement('canvas'), r = p.rot & 3; c.width = r & 1 ? H : W; c.height = r & 1 ? W : H;
   const t = document.createElement('canvas'); t.width = W; t.height = H; t.getContext('2d').putImageData(new ImageData(px, W, H), 0, 0);
   const x = c.getContext('2d'); x.translate(c.width / 2, c.height / 2); x.rotate(r * Math.PI / 2); x.drawImage(t, -W / 2, -H / 2);
   p.out = c;
   if (p.url) URL.revokeObjectURL(p.url);
-  p.url = URL.createObjectURL(await new Promise(ok => c.toBlob(ok, 'image/jpeg', .85)));
+  p.url = URL.createObjectURL(await new Promise(ok => c.toBlob(ok, 'image/jpeg', .8)));
 }
 
 /* ---------- Recadrage (4 coins + loupe) ---------- */
@@ -494,14 +584,43 @@ function drawRev(jump) {
   E('scTL').style.visibility = E('scTR').style.visibility = PAGES.length > 1 ? 'visible' : 'hidden';
   if (jump) requestAnimationFrame(() => { s.scrollLeft = CUR * s.clientWidth; });
 }
-function drawFilt() { E('scFilt').querySelectorAll('button').forEach(b => b.classList.toggle('on', PAGES[CUR] && b.dataset.f === PAGES[CUR].f)); E('scThumbs').querySelectorAll('button[data-i]').forEach(b => b.classList.toggle('on', +b.dataset.i === CUR)); }
+function miniDe(p) {   // aperçus de chaque filtre pour la page courante
+  if (p.mini) return p.mini;
+  const s = p.src, sd = s.getContext('2d').getImageData(0, 0, s.width, s.height).data, [W, H] = SC.outSize(p.q, 150), base = SC.warp(sd, s.width, s.height, p.q, W, H);
+  const r = p.rot & 3, c = document.createElement('canvas'), t = document.createElement('canvas'); t.width = W; t.height = H; c.width = r & 1 ? H : W; c.height = r & 1 ? W : H;
+  p.mini = {};
+  for (const [f] of SC.FILTRES) { const px = new Uint8ClampedArray(base); SC.filter(px, W, H, f); t.getContext('2d').putImageData(new ImageData(px, W, H), 0, 0);
+    const x = c.getContext('2d'); x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, c.width, c.height); x.translate(c.width / 2, c.height / 2); x.rotate(r * Math.PI / 2); x.drawImage(t, -W / 2, -H / 2); p.mini[f] = c.toDataURL('image/jpeg', .7); }
+  return p.mini;
+}
+let filtPour = [];
+function drawFilt() {
+  const p = PAGES[CUR], F = E('scFilt');
+  if (p && (filtPour[0] !== p || filtPour[1] !== p.mini || filtPour[2] !== PAGES.length)) {
+    const m = miniDe(p); filtPour = [p, m, PAGES.length];
+    F.innerHTML = SC.FILTRES.map(([f, l]) => `<button data-f="${f}"><i><img src="${m[f]}" alt=""></i><span>${l}</span></button>`).join('') + (PAGES.length > 1 ? '<button data-f="*" class="all"><i>⧉</i><span>Toutes</span></button>' : '');
+    F.querySelectorAll('button').forEach(b => b.onclick = () => choisirFiltre(b.dataset.f));
+  }
+  F.querySelectorAll('button').forEach(b => b.classList.toggle('on', !!p && b.dataset.f === p.f));
+  const a = (p && p.adj) || {}; E('scAdj').querySelectorAll('input').forEach(i => { const v = a[i.dataset.k] == null ? (i.dataset.k === 's' ? 50 : 0) : a[i.dataset.k]; i.value = v; i.nextElementSibling.textContent = v; });
+  E('scThumbs').querySelectorAll('button[data-i]').forEach(b => b.classList.toggle('on', +b.dataset.i === CUR)); }
 function goPage(i) { CUR = i; const s = E('scStrip'); s.scrollTo({ left: i * s.clientWidth, behavior: 'smooth' }); drawFilt(); }
 E('scStrip').addEventListener('scroll', () => { const s = E('scStrip'), i = Math.round(s.scrollLeft / Math.max(1, s.clientWidth)); if (i !== CUR && PAGES[i]) { CUR = i; drawFilt(); } }, { passive: true });
 async function redo(p) { const sl = E('scStrip').querySelector(`.sl[data-i="${CUR}"]`); if (sl) sl.insertAdjacentHTML('beforeend', '<span class="wait">Traitement…</span>'); await tick(); await renderPage(p); drawRev(); E('scStrip').scrollLeft = CUR * E('scStrip').clientWidth; }
-E('scFilt').querySelectorAll('button').forEach(b => b.onclick = async () => {
-  const p = PAGES[CUR]; if (!p || p.f === b.dataset.f) return; p.f = FILT = b.dataset.f; savePrefs(); drawFilt(); busy('Application du filtre…'); await tick();
-  try { await redo(p); } finally { busy(); }
+async function choisirFiltre(f) {
+  const p = PAGES[CUR]; if (!p) return;
+  if (f === '*') { busy('Filtre appliqué à toutes les pages…'); await tick(); try { for (const x of PAGES) if (x !== p || x.f !== p.f) { x.f = p.f; x.adj = { ...(p.adj || {}) }; await renderPage(x); }  drawRev(true); toast('« ' + SC.FILTRES.find(x => x[0] === p.f)[1] + ' » sur toutes les pages'); } finally { busy(); } return; }
+  if (p.f === f) return; p.f = FILT = f; savePrefs(); E('scFilt').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.f === f)); busy('Application du filtre…'); await tick();
+  try { await redo(p);  drawFilt(); } finally { busy(); }
+}
+E('scTAdj').onclick = () => { const on = E('scAdj').classList.toggle('on'); E('scTAdj').classList.toggle('on', on); };
+let adjT = null;
+E('scAdj').querySelectorAll('input').forEach(i => {
+  i.oninput = () => { i.nextElementSibling.textContent = i.value; };
+  i.onchange = () => { const p = PAGES[CUR]; if (!p) return; p.adj = { ...(p.adj || {}), [i.dataset.k]: +i.value }; clearTimeout(adjT); adjT = setTimeout(async () => { await redo(p);  drawFilt(); }, 60); };
 });
+E('scAdj0').onclick = async () => { const p = PAGES[CUR]; if (!p) return; p.adj = {}; busy('Réinitialisation…'); try { await redo(p);  drawFilt(); } finally { busy(); } };
+E('scAdjAll').onclick = async () => { const p = PAGES[CUR]; if (!p) return; busy('Réglages appliqués à toutes les pages…'); await tick(); try { for (const x of PAGES) if (x !== p) { x.adj = { ...(p.adj || {}) }; await renderPage(x); }  drawRev(true); } finally { busy(); } };
 E('scTRot').onclick = async () => { const p = PAGES[CUR]; if (!p) return; p.rot = (p.rot + 1) & 3; busy('Rotation…'); try { await redo(p); } finally { busy(); } };
 E('scTCrop').onclick = () => PAGES[CUR] && openCrop(CUR);
 const swap = (a, b) => { [PAGES[a], PAGES[b]] = [PAGES[b], PAGES[a]]; CUR = b; drawRev(true); };
@@ -517,7 +636,7 @@ E('scTDel').onclick = async () => {
 E('scRevBack').onclick = () => { revFrom = false; pane('scCam'); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 200); } else camStart(); };
 
 /* ---------- Enregistrement dans le coffre (chiffré) ---------- */
-const jpg = c => new Promise(ok => c.toBlob(b => b.arrayBuffer().then(a => ok(new Uint8Array(a))), 'image/jpeg', .85));
+const jpg = c => new Promise(ok => c.toBlob(b => b.arrayBuffer().then(a => ok(new Uint8Array(a))), 'image/jpeg', Q().jq));
 const thumbOf = c => drawThumb(c, c.width, c.height);
 E('scSave').onclick = async () => {
   if (DEST === 'note') return saveNote();
@@ -630,7 +749,7 @@ E('scIn').onchange = async e => {
       const w = bm.width || bm.naturalWidth, h = bm.height || bm.naturalHeight, src = toCanvas(bm, w, h);
       if (bm.close) bm.close();
       let q = null; try { q = detectOn(src, src.width, src.height); } catch (er) {}
-      PAGES.push({ src, q: q || inset(src.width, src.height, 0), rot: 0, f: FILT, out: null, url: null, auto: !!q });
+      PAGES.push({ src, q: q || inset(src.width, src.height, 0), rot: 0, f: FILT, adj: {}, out: null, url: null, auto: !!q });
       if (!q && firstNo < 0) firstNo = PAGES.length - 1;
       await renderPage(PAGES[PAGES.length - 1]);
     }

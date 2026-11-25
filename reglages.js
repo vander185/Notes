@@ -10,7 +10,10 @@ const Pset = o => { try { localStorage.setItem('nprefs', JSON.stringify(Object.a
 window.nPrefs = P;
 const ACC = {
   or: ['Or', '#e5b400', '#1a1400'], bleu: ['Bleu', '#0a84ff', '#fff'], vert: ['Vert', '#30d158', '#04210f'],
-  rose: ['Rose', '#ff375f', '#fff'], violet: ['Violet', '#bf5af2', '#fff'], orange: ['Orange', '#ff9f0a', '#241400'], menthe: ['Menthe', '#63e6e2', '#032221']
+  rose: ['Rose', '#ff375f', '#fff'], violet: ['Violet', '#bf5af2', '#fff'], orange: ['Orange', '#ff9f0a', '#241400'], menthe: ['Menthe', '#63e6e2', '#032221'],
+  rouge: ['Rouge', '#ff453a', '#fff'], indigo: ['Indigo', '#5e5ce6', '#fff'], ciel: ['Ciel', '#64d2ff', '#00202e'], emeraude: ['Émeraude', '#00c7a0', '#002119'],
+  citron: ['Citron', '#d7f205', '#1c2000'], corail: ['Corail', '#ff7a6b', '#2a0a05'], lavande: ['Lavande', '#b4a7ff', '#150f33'], peche: ['Pêche', '#ffb37a', '#2b1300'],
+  sable: ['Sable', '#d4b483', '#241a08'], graphite: ['Graphite', '#aeaeb2', '#111']
 };
 const TAILLE = { p: ['Petite', 15], n: ['Normale', 17], g: ['Grande', 19], tg: ['Très grande', 22] };
 
@@ -97,7 +100,7 @@ html[data-apercu="0"] #nlist.v-list .ni p{display:none}
 .sw2{width:51px;height:31px;flex:none;border-radius:99px;background:#39393f;position:relative;transition:background .25s}
 .sw2:after{content:'';position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 6px #0006;transition:transform .25s cubic-bezier(.3,1.4,.5,1)}
 .sw2.on{background:var(--acc)}.sw2.on:after{transform:translateX(20px)}
-#nset .pal{display:flex;gap:10px;padding:10px 14px 16px;justify-content:space-between}
+#nset .pal{display:grid;grid-template-columns:repeat(6,1fr);gap:12px 8px;padding:10px 14px 16px;justify-items:center}
 #nset .pal button{width:36px;height:36px;flex:none;border-radius:50%;position:relative;box-shadow:inset 0 0 0 2px #0004}
 #nset .pal button.on{box-shadow:0 0 0 3px #000,0 0 0 5px currentColor}
 #nset .seg{display:flex;background:#0c0c0f;border-radius:11px;padding:3px;margin:0 14px 14px}
@@ -122,7 +125,7 @@ function dessiner() {
   const p = P(), sx = window.SEXPget ? window.SEXPget() : {}, scp = (() => { try { return JSON.parse(localStorage.getItem('scanPrefs') || '{}'); } catch (e) { return {}; } })();
   const vue = (() => { try { return localStorage.getItem('nview') || 'list'; } catch (e) { return 'list'; } })(), tri = (() => { try { return localStorage.getItem('nsort') || 'upd'; } catch (e) { return 'upd'; } })();
   const nb = (window.NOTES_N && window.NOTES_N()) || { notes: 0, del: 0, docs: 0 };
-  const F = { auto: 'Auto couleur', bw: 'Noir & blanc', gray: 'Gris', orig: 'Original' };
+  const F = Object.fromEntries((window.SCANCORE && SCANCORE.FILTRES) || [['auto', 'Auto couleur']]);
   document.getElementById('sbody').innerHTML =
     `<h6>Apparence</h6><div class="gp"><div class="lbl">Couleur d’accent<span>${(ACC[p.acc] || ACC.or)[0]}</span></div><div class="pal">${Object.entries(ACC).map(([k, a]) => `<button data-acc="${k}" class="${p.acc === k ? 'on' : ''}" style="background:${a[1]};color:${a[1]}" aria-label="${a[0]}"></button>`).join('')}</div>` +
     `<div class="lbl">Taille du texte<span>${TAILLE[p.taille][0]}</span></div><div class="seg" data-seg="taille">${Object.entries(TAILLE).map(([k, t]) => `<button data-v="${k}" class="${p.taille === k ? 'on' : ''}" style="font-size:${10 + t[1] / 3}px">Aa</button>`).join('')}</div>` +
@@ -140,7 +143,8 @@ function dessiner() {
     rw('drive', '☁️', 'c6', 'Enregistrer sur Google Drive', sx.email ? sx.email + ' · « Scans (Notes) »' : 'Dossier « Scans (Notes) »', sw(sx.drive)) +
     rw('ocr', '🔤', 'c5', 'Lire le texte des scans', 'Le texte reconnu est écrit dans la note', sw(p.ocr)) +
     rw('auto', '⚡', 'c1', 'Déclenchement automatique', 'Photo prise dès que le document est stable', sw(scp.a !== false)) +
-    rw('filtre', '🎨', 'c4', 'Filtre par défaut', '', vl(F[scp.f || 'auto'])) +
+    rw('filtre', '🎨', 'c4', 'Filtre par défaut', '', vl(F[scp.f || 'auto'] || 'Auto couleur')) +
+    rw('qual', '💎', 'c2', 'Qualité des scans', 'Plus haut = plus net, fichier plus lourd', vl({ std: 'Standard', haute: 'Haute', max: 'Maximale' }[scp.q || 'haute'])) +
     rw('nom', '🏷️', 'c8', 'Nom des scans', 'Suivi de la date et de l’heure', vl(p.nomScan)) +
     rw('docs', '📄', 'c2', 'Documents scannés', '', vl(nb.docs)) + `</div>` +
 
@@ -172,7 +176,8 @@ document.getElementById('sbody').addEventListener('click', async e => {
   if (id === 'ocr') Pset({ ocr: !p.ocr });
   if (id === 'auto') scpSet({ a: scp.a === false });
   if (id === 'corbeille') { const v = await sheet('Garder les notes supprimées', [7, 30, 90].map(j => ({ v: j, ico: '🗓️', label: j + ' jours' + (p.corbeille === j ? '  ✓' : '') }))); if (v) Pset({ corbeille: v }); }
-  if (id === 'filtre') { const v = await sheet('Filtre par défaut', [['auto', '✨', 'Auto couleur', 'Couleurs nettes, fond blanc'], ['bw', '⚫', 'Noir & blanc', 'Idéal pour le texte'], ['gray', '🩶', 'Gris', 'Doux et lisible'], ['orig', '🖼️', 'Original', 'Sans retouche']].map(([v, i, l, s]) => ({ v, ico: i, label: l + ((scp.f || 'auto') === v ? '  ✓' : ''), sub: s }))); if (v) scpSet({ f: v }); }
+  if (id === 'filtre') { const v = await sheet('Filtre par défaut', [['auto', '✨', 'Auto couleur', 'Couleurs nettes, fond blanc'], ['doc', '📄', 'Document', 'Papier très blanc, texte bien noir'], ['vif', '🌈', 'Couleurs vives', 'Pour les dépliants, dessins, tampons'], ['photo', '📷', 'Photo', 'Garde l’ambiance, corrige la lumière'], ['tableau', '🧑‍🏫', 'Tableau blanc', 'Efface les reflets, feutres éclatants'], ['bw', '⚫', 'Noir & blanc', 'Idéal pour le texte'], ['encre', '✒️', 'Texte net', 'Noir pur sur blanc pur, comme un fax'], ['gray', '🩶', 'Gris', 'Doux et lisible'], ['eco', '🍃', 'Éco encre', 'Imprime en consommant moins'], ['sepia', '🟤', 'Ancien', 'Ton sépia chaleureux'], ['orig', '🖼️', 'Original', 'Sans retouche']].map(([v, i, l, s]) => ({ v, ico: i, label: l + ((scp.f || 'auto') === v ? '  ✓' : ''), sub: s }))); if (v) scpSet({ f: v }); }
+  if (id === 'qual') { const q = scp.q || 'haute'; const v = await sheet('Qualité des scans', [['std', '⚡', 'Standard', 'Rapide, fichiers légers'], ['haute', '💎', 'Haute', 'Photo pleine résolution, texte net (conseillé)'], ['max', '🔬', 'Maximale', 'Le plus net possible, PDF plus lourds']].map(([v, i, l, s]) => ({ v, ico: i, label: l + (q === v ? '  ✓' : ''), sub: s }))); if (v) scpSet({ q: v }); }
   if (id === 'nom') { let v = await ask({ title: 'Nom des scans', text: 'Ex. « Facture » donnera « Facture 2026-11-25 10h15 ».', input: p.nomScan, ok: 'Enregistrer' }); v = (v || '').trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 30); if (v) Pset({ nomScan: v }); }
   if (id === 'tel' && window.SEXPset) { const s = window.SEXPget(); window.SEXPset({ tel: !s.tel }); }
   if (id === 'drive' && window.SEXPset) { const s = window.SEXPget(); if (s.drive) window.SEXPset({ drive: false }); else { window.SEXPset({ drive: true }); try { await window.nAuthPub(); toast('Google Drive relié ✓'); } catch (er) { toast('Connexion Google annulée'); } } }

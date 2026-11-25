@@ -287,7 +287,7 @@ function notesDraw() {
       (n.scans && n.scans.length ? `<span class="tg">📄 PDF${n.scans.length > 1 ? ' ×' + n.scans.length : ''}</span>` : '') + '</div>';
     const th = n.scans && n.scans[0] && n.scans[0].thumb;
     const acts = DOSSIER === 'trash' ? '' : `<div class="sa"><button class="p" data-a="pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><use href="#i-pin"/></svg>${n.pin ? 'Désépingler' : 'Épingler'}</button><button class="m" data-a="move"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Dossier</button><button class="d" data-a="del"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Supprimer</button></div>`;
-    html += `<div class="sw" data-id="${n.id}">${acts}<button class="ni${th ? ' th' : ''}" data-id="${n.id}"><b${t ? '' : ' class="nt"'}><span>${esc(t || 'Sans titre')}</span>${pjt}${tag}</b>` +
+    html += `<div class="sw" data-id="${n.id}">${acts}<button class="ni${th ? ' th' : ''}" data-id="${n.id}"${n.col ? ` data-c="${n.col}"` : ''}><b${t ? '' : ' class="nt"'}><span>${esc(t || 'Sans titre')}</span>${pjt}${tag}</b>` +
       `<p>${esc(body.slice(0, 8).join('\n').slice(0, 400))}</p>` + meta + (th ? `<img class="nth" src="${th}" alt="">` : '') +
       `<small><em>${nDate(key(n))}</em>${esc(sub || 'Aucun texte supplémentaire')}</small><em class="cd">${nDate(key(n))}</em></button></div>`;
   });
@@ -307,7 +307,7 @@ function noteEdit(n) {
   $('#npin').classList.toggle('on', !!n.pin); nStat();
   const s = $('#nsrc'); s.classList.toggle('hide', !n.src);
   if (n.src) s.textContent = (n.src === 'Samsung Notes' ? 'Importée de Samsung Notes' : 'Note importée') + (n.cre ? ' · créée le ' + new Date(n.cre).toLocaleDateString('fr-BE', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
-  pjDraw();
+  pjDraw(); nCouleur();
   show('nedit'); if (!n.txt && !n.title) setTimeout(() => $('#ntitle').focus(), 80);
 }
 $('#nlist').addEventListener('click', async e => {
@@ -337,6 +337,7 @@ $('#nmenu').onclick = async () => {
   const v = await sheet('Note', [
     { v: 'copy', ico: '📋', label: 'Copier le texte' },
     { v: 'dup', ico: '🗐', label: 'Dupliquer la note' },
+    { v: 'col', ico: '🎨', label: 'Couleur de la note', sub: curNote.col ? NCOL[curNote.col][0] : 'Aucune' },
     { v: 'move', ico: '📁', label: 'Déplacer vers un dossier', sub: curNote.folder ? 'Actuellement : ' + curNote.folder : 'Actuellement : aucun dossier' },
     { v: 'del', ico: '🗑️', dg: 1, label: 'Supprimer la note' }
   ]);
@@ -344,7 +345,11 @@ $('#nmenu').onclick = async () => {
   if (v === 'dup') { const c = { ...curNote, id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), title: (curNote.title || 'Sans titre') + ' (copie)', upd: Date.now(), pin: false }; if (c.scans) { c.scans = []; for (const p of curNote.scans) { const nid = 'ns' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), b = await mget('nscan:' + p.id); if (b) { await mset('nscan:' + nid, b); c.scans.push({ ...p, id: nid }); } } } NOTES.push(c); await nSave(); noteEdit(c); toast('Note dupliquée'); }
   if (v === 'move') { const d = await choisirDossier(curNote.folder); if (d !== null) { if (d) curNote.folder = d; else delete curNote.folder; await nSave(); toast(d ? 'Note rangée dans « ' + d + ' »' : 'Note sortie du dossier'); } }
   if (v === 'del') $('#ndel').click();
+  if (v === 'col') { const c = await sheet('Couleur de la note', [{ v: '-', ico: '⚪', label: 'Aucune' + (curNote.col ? '' : '  ✓') }, ...Object.entries(NCOL).map(([k, x]) => ({ v: k, ico: x[2], label: x[0] + (curNote.col === k ? '  ✓' : '') }))]); if (c) { if (c === '-') delete curNote.col; else curNote.col = c; nCouleur(); await nSave(); } }
 };
+const NCOL = { jaune: ['Jaune', '#ffd60a', '🟡'], orange: ['Orange', '#ff9f0a', '🟠'], rouge: ['Rouge', '#ff453a', '🔴'], rose: ['Rose', '#ff375f', '🩷'], violet: ['Violet', '#bf5af2', '🟣'], bleu: ['Bleu', '#0a84ff', '🔵'], ciel: ['Ciel', '#64d2ff', '🩵'], vert: ['Vert', '#30d158', '🟢'], marron: ['Marron', '#ac8e68', '🟤'], gris: ['Gris', '#8e8e93', '🩶'] };
+function nCouleur() { const c = curNote && curNote.col && NCOL[curNote.col]; document.documentElement.style.setProperty('--ncol', c ? c[1] : 'transparent'); document.body.classList.toggle('ncol', !!c); }
+(() => { const st = document.createElement('style'); st.textContent = Object.entries(NCOL).map(([k, x]) => `.ni[data-c="${k}"]{background:linear-gradient(135deg,color-mix(in srgb,${x[1]} 22%,#1c1c1e),color-mix(in srgb,${x[1]} 8%,#1c1c1e))!important;box-shadow:inset 3px 0 0 ${x[1]}!important}.ni[data-c="${k}"] .nm{color:${x[1]}}`).join('') + 'body.ncol #ntitle{border-left:4px solid var(--ncol);padding-left:10px}'; document.head.appendChild(st); })();
 $('#ndel').onclick = async () => {
   if (!curNote) return;
   if (nVide(curNote)) { NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave(); return; }
