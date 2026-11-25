@@ -32,7 +32,7 @@ public class ReminderReceiver extends BroadcastReceiver {
             // Claire ouvre l'appli et dit le message avec sa voix (même téléphone verrouillé)
             KeyguardManager k = (KeyguardManager) c.getSystemService(Context.KEYGUARD_SERVICE);
             boolean locked = k != null && k.isKeyguardLocked();
-            Intent a = new Intent(c, MainActivity.class).putExtra("annonce", in.getStringExtra("text")).putExtra("lock", locked)
+            Intent a = new Intent(c, MainActivity.class).putExtra("annonce", in.getStringExtra("text")).putExtra("lock", locked).putExtra("jeton", WakeService.jeton(c))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             boolean canOpen = Build.VERSION.SDK_INT < 29 || Settings.canDrawOverlays(c);
             if (canOpen) { try { c.startActivity(a); } catch (Exception ignored) { } }

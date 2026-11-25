@@ -64,7 +64,12 @@ public class MainActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
                 Uri u = r.getUrl();
-                if ("https".equals(u.getScheme()) && "vander185.github.io".equals(u.getHost()) && u.getPath() != null && u.getPath().startsWith("/claire")) return false;
+                String p = u.getPath() == null ? "" : u.getPath();
+                if ("https".equals(u.getScheme()) && "vander185.github.io".equals(u.getHost()) && (p.equals("/claire") || p.startsWith("/claire/"))) {
+                    // téléphone verrouillé : pas de réglages (contacts, appels, mémoire)
+                    if (lockMode && p.contains("reglages")) return true;
+                    return false;
+                }
                 openOutside(u);
                 return true;
             }
@@ -82,8 +87,10 @@ public class MainActivity extends Activity {
 
     /** talk = commencer à écouter ; lock = téléphone verrouillé (afficher par-dessus) */
     private void handle(Intent i, boolean first) {
-        boolean talk = i != null && i.getBooleanExtra("talk", false);
-        String annonce = i == null ? null : i.getStringExtra("annonce");
+        // seules les demandes de Claire elle-même (réveil vocal, rappel de prière) peuvent l'ouvrir sur l'écran verrouillé
+        boolean interne = WakeService.jetonOk(this, i);
+        boolean talk = interne && i.getBooleanExtra("talk", false);
+        String annonce = interne ? i.getStringExtra("annonce") : null;
         if (annonce != null) {   // rappel de prière dit à voix haute
             i.removeExtra("annonce");
             annonceRetour = !visible;   // appli ouverte juste pour l'annonce : elle se referme après
@@ -110,7 +117,12 @@ public class MainActivity extends Activity {
     private void openOutside(Uri u) {
         try {
             Intent i;
-            if ("intent".equals(u.getScheme())) i = Intent.parseUri(u.toString(), Intent.URI_INTENT_SCHEME);
+            if ("intent".equals(u.getScheme())) {
+                i = Intent.parseUri(u.toString(), Intent.URI_INTENT_SCHEME);
+                // pas de cible précise ni de données cachées, et jamais Claire elle-même
+                if (getPackageName().equals(i.getPackage()) || (i.getComponent() != null && getPackageName().equals(i.getComponent().getPackageName()))) return;
+                i.setComponent(null); i.setSelector(null); i.replaceExtras((Bundle) null);
+            }
             else if ("tel".equals(u.getScheme())) i = new Intent(Intent.ACTION_DIAL, u);
             else i = new Intent(Intent.ACTION_VIEW, u);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -156,7 +168,7 @@ public class MainActivity extends Activity {
         }
         @JavascriptInterface public boolean wakeRunning() { return WakeService.running; }
         @JavascriptInterface public void wake(boolean on) {
-            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("clairewake://" + (on ? "on" : "off")), MainActivity.this, WakeActivity.class);
+            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("clairewake://" + (on ? "on" : "off")), MainActivity.this, WakeActivity.class).putExtra("jeton", WakeService.jeton(MainActivity.this));
             startActivity(i);
         }
         /** fin de conversation sur l'écran verrouillé : on revient à l'écran de verrouillage */

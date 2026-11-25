@@ -25,6 +25,21 @@ public class WakeActivity extends Activity {
         super.onCreate(s);
         Uri d = getIntent() != null ? getIntent().getData() : null;
         String host = d != null ? d.getHost() : "on";
+        if (!WakeService.jetonOk(this, getIntent())) {   // demande venue d'ailleurs (page web, autre appli) : on demande d'abord
+            final String h = host;
+            new android.app.AlertDialog.Builder(this)
+                .setTitle("Claire")
+                .setMessage("off".equals(h) ? "Couper le réveil vocal « Claire » ?" : "Activer le réveil vocal « Claire » ?")
+                .setPositiveButton("Oui", (x, y) -> faire(h))
+                .setNegativeButton("Non", (x, y) -> finish())
+                .setOnCancelListener(x -> finish())
+                .show();
+            return;
+        }
+        faire(host);
+    }
+
+    private void faire(String host) {
         if ("off".equals(host)) {
             WakeService.prefs(this).edit().putBoolean("wake", false).apply();
             stopService(new Intent(this, WakeService.class));

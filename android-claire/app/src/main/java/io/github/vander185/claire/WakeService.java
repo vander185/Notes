@@ -61,6 +61,17 @@ public class WakeService extends Service {
     private long skipped = 0;                             // échantillons non envoyés à la reconnaissance (pauses)
 
     static SharedPreferences prefs(Context c) { return c.getSharedPreferences("claire", MODE_PRIVATE); }
+    /** jeton secret propre au téléphone : seules les demandes venant de Claire elle-même le connaissent
+     *  (une autre appli ne peut donc pas ouvrir Claire par-dessus l'écran verrouillé ni lui faire dire un texte) */
+    static String jeton(Context c) {
+        SharedPreferences p = prefs(c); String j = p.getString("jeton", null);
+        if (j == null) { j = java.util.UUID.randomUUID().toString(); p.edit().putString("jeton", j).apply(); }
+        return j;
+    }
+    static boolean jetonOk(Context c, android.content.Intent i) {
+        String j = i == null ? null : i.getStringExtra("jeton");
+        return j != null && j.equals(jeton(c));
+    }
 
     @Override public IBinder onBind(Intent i) { return null; }
 
@@ -302,7 +313,7 @@ public class WakeService extends Service {
     private Intent talkIntent() {
         KeyguardManager k = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
         boolean locked = k != null && k.isKeyguardLocked();
-        Intent i = new Intent(this, MainActivity.class).putExtra("talk", true).putExtra("lock", locked);
+        Intent i = new Intent(this, MainActivity.class).putExtra("talk", true).putExtra("lock", locked).putExtra("jeton", jeton(this));
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         return i;
     }
