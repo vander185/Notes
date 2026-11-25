@@ -250,6 +250,10 @@ public class MainActivity extends Activity {
             ((AlarmManager) getSystemService(ALARM_SERVICE)).cancel(ReminderReceiver.priere(MainActivity.this, id, ""));
         }
         /* notifications reçues (si Ahmed l'a autorisé dans les réglages du téléphone) */
+        /** la lecture des notifications est-elle présente dans cette version de l'appli ? */
+        @JavascriptInterface public boolean notifDispo() {
+            try { getPackageManager().getServiceInfo(new android.content.ComponentName(MainActivity.this, NotifService.class), 0); return true; } catch (Exception e) { return false; }
+        }
         @JavascriptInterface public boolean notifAccess() { return NotifService.autorise(MainActivity.this); }
         @JavascriptInterface public void openNotifAccess() {
             try { startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Exception ignored) { }
