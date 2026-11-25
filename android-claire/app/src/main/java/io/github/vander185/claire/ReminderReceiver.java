@@ -46,7 +46,7 @@ public class ReminderReceiver extends BroadcastReceiver {
         PendingIntent open = PendingIntent.getActivity(c, 5, new Intent(c, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(c, CH) : new Notification.Builder(c);
         String text = in.getStringExtra("text");
-        b.setSmallIcon(R.drawable.ic_mic).setContentTitle(in.getBooleanExtra("voix", false) ? "🕌 Prière" : "Rappel de Claire").setContentText(text == null ? "Rappel" : text)
+        b.setSmallIcon(R.drawable.ic_mic).setContentTitle(in.getBooleanExtra("voix", false) ? (text != null && text.startsWith("☀") ? "☀️ Briefing du matin" : "🕌 Prière") : "Rappel de Claire").setContentText(text == null ? "Rappel" : text)
                 .setStyle(new Notification.BigTextStyle().bigText(text == null ? "Rappel" : text))
                 .setContentIntent(open).setAutoCancel(true).setCategory(Notification.CATEGORY_REMINDER);
         if (Build.VERSION.SDK_INT < 26) b.setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL);

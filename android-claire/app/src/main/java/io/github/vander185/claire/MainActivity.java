@@ -14,6 +14,9 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
+import android.provider.Settings;
+import java.io.File;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -27,7 +30,9 @@ import android.webkit.WebViewClient;
  */
 public class MainActivity extends Activity {
     static final String BASE = "https://vander185.github.io/claire/";
-    private static final int REQ_MIC = 3;
+    private static final int REQ_MIC = 3, REQ_FICHIER = 4, REQ_LIEU = 5, REQ_LIEU_FOND = 6;
+    private ValueCallback<Uri[]> fichierCb;
+    private Uri photoUri;
     private WebView web;
     private PermissionRequest pendingReq;
     private boolean lockMode, visible, annonceRetour;
@@ -58,6 +63,27 @@ public class MainActivity extends Activity {
                         req.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
                     else { pendingReq = req; requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MIC); }
                 });
+            }
+            /** trombone 📎 : photo d'un document (appareil photo) ou image de la galerie */
+            @Override
+            public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams params) {
+                if (fichierCb != null) fichierCb.onReceiveValue(null);
+                fichierCb = cb; photoUri = null;
+                Intent photo = null;
+                try {
+                    File dir = new File(getCacheDir(), "photos"); dir.mkdirs();
+                    File f = new File(dir, "doc-" + System.currentTimeMillis() + ".jpg");
+                    photoUri = androidx.core.content.FileProvider.getUriForFile(MainActivity.this, "io.github.vander185.claire.fichiers", f);
+                    photo = new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).putExtra(android.provider.MediaStore.EXTRA_OUTPUT, photoUri)
+                            .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } catch (Exception e) { photoUri = null; }
+                Intent galerie = new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*");
+                Intent choix;
+                if (params.isCaptureEnabled() && photo != null) choix = photo;
+                else { choix = Intent.createChooser(galerie, "Document à lire"); if (photo != null) choix.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{photo}); }
+                try { startActivityForResult(choix, REQ_FICHIER); }
+                catch (Exception e) { fichierCb = null; cb.onReceiveValue(null); return false; }
+                return true;
             }
         });
         web.setWebViewClient(new WebViewClient() {
@@ -137,6 +163,22 @@ public class MainActivity extends Activity {
             else pendingReq.deny();
             pendingReq = null;
         }
+        // après « pendant l'utilisation », Android demande à part « toujours » (nécessaire pour les rappels de lieu)
+        if (code == REQ_LIEU && res.length > 0 && res[0] == PackageManager.PERMISSION_GRANTED && Build.VERSION.SDK_INT >= 29
+                && checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED)
+            requestPermissions(new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, REQ_LIEU_FOND);
+    }
+
+    @Override
+    protected void onActivityResult(int code, int res, Intent data) {
+        super.onActivityResult(code, res, data);
+        if (code != REQ_FICHIER || fichierCb == null) return;
+        Uri[] r = null;
+        if (res == RESULT_OK) {
+            if (data != null && data.getData() != null) r = new Uri[]{data.getData()};
+            else if (photoUri != null) r = new Uri[]{photoUri};
+        }
+        fichierCb.onReceiveValue(r); fichierCb = null;
     }
 
     @Override protected void onResume() { super.onResume(); visible = true; }
@@ -206,6 +248,38 @@ public class MainActivity extends Activity {
         }
         @JavascriptInterface public void cancelPrayer(String id) {
             ((AlarmManager) getSystemService(ALARM_SERVICE)).cancel(ReminderReceiver.priere(MainActivity.this, id, ""));
+        }
+        /* notifications reçues (si Ahmed l'a autorisé dans les réglages du téléphone) */
+        @JavascriptInterface public boolean notifAccess() { return NotifService.autorise(MainActivity.this); }
+        @JavascriptInterface public void openNotifAccess() {
+            try { startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Exception ignored) { }
+        }
+        @JavascriptInterface public String notifications(int minutes) {
+            if (!NotifService.autorise(MainActivity.this)) return "null";
+            return NotifService.liste(MainActivity.this, minutes);
+        }
+        /* localisation, pour les rappels selon le lieu */
+        @JavascriptInterface public String locationState() {
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return "non";
+            if (Build.VERSION.SDK_INT >= 29 && checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) return "premier_plan";
+            return "toujours";
+        }
+        @JavascriptInterface public void askLocation() {
+            runOnUiThread(() -> {
+                if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)
+                    requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_LIEU);
+                else if (Build.VERSION.SDK_INT >= 29 && checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED)
+                    requestPermissions(new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, REQ_LIEU_FOND);
+            });
+        }
+        @JavascriptInterface public boolean geofence(String id, double lat, double lon, double rayon, boolean arrivee, String texte, String lieu) {
+            return GeoReceiver.ajouter(MainActivity.this, id, lat, lon, (float) Math.max(100, Math.min(rayon, 1000)), arrivee, texte, lieu);
+        }
+        @JavascriptInterface public void cancelGeofence(String id) { GeoReceiver.retirer(MainActivity.this, id); }
+        /* widget de l'écran d'accueil : prochain rendez-vous */
+        @JavascriptInterface public void widget(String txt) {
+            WakeService.prefs(MainActivity.this).edit().putString("widget_txt", txt == null || txt.isEmpty() ? "Touche pour parler à Claire" : txt).apply();
+            ClaireWidget.majTout(MainActivity.this);
         }
         @JavascriptInterface public void cancelReminder(String id) {
             ((AlarmManager) getSystemService(ALARM_SERVICE)).cancel(ReminderReceiver.pending(MainActivity.this, id, ""));

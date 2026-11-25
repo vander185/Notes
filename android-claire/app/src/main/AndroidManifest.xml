@@ -14,10 +14,17 @@
     <!-- rappels à l'heure exacte -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- rappels selon le lieu (« quand j'arrive au snack… ») -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <queries>
         <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>
         <intent><action android:name="android.intent.action.DIAL" /></intent>
+        <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
+        <intent><action android:name="android.intent.action.GET_CONTENT" /><data android:mimeType="image/*" /></intent>
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
     </queries>
@@ -45,6 +52,38 @@
         </activity>
 
         <receiver android:name=".ReminderReceiver" android:exported="false" />
+
+        <!-- rappels selon le lieu, remis en place après un redémarrage -->
+        <receiver android:name=".GeoReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- widget de l'écran d'accueil -->
+        <receiver android:name=".ClaireWidget" android:exported="false" android:label="Claire">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info" />
+        </receiver>
+
+        <!-- lecture des notifications, seulement si Ahmed l'autorise dans les réglages du téléphone -->
+        <service
+            android:name=".NotifService"
+            android:label="Claire"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>
+        </service>
+
+        <!-- photos de documents prises avec l'appareil photo -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="io.github.vander185.claire.fichiers"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- Réglage du réveil vocal (ouvert depuis l'appli : clairewake://on ou clairewake://off) -->
         <activity

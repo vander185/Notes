@@ -3,4 +3,6 @@
     <string name="app_name">Claire</string>
     <string name="launch_url">https://vander185.github.io/claire/</string>
     <string name="asset_statements" translatable="false">[{\"relation\": [\"delegate_permission/common.handle_all_urls\"], \"target\": {\"namespace\": \"web\", \"site\": \"https://vander185.github.io\"}}]</string>
+    <string name="widget_desc">Parler à Claire et voir ton prochain rendez-vous</string>
+    <string name="notif_desc">Permet à Claire de te lire tes notifications quand tu le lui demandes</string>
 </resources>
