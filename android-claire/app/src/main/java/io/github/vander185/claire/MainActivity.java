@@ -30,7 +30,7 @@ public class MainActivity extends Activity {
     private static final int REQ_MIC = 3;
     private WebView web;
     private PermissionRequest pendingReq;
-    private boolean lockMode;
+    private boolean lockMode, visible, annonceRetour;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
@@ -83,6 +83,16 @@ public class MainActivity extends Activity {
     /** talk = commencer à écouter ; lock = téléphone verrouillé (afficher par-dessus) */
     private void handle(Intent i, boolean first) {
         boolean talk = i != null && i.getBooleanExtra("talk", false);
+        String annonce = i == null ? null : i.getStringExtra("annonce");
+        if (annonce != null) {   // rappel de prière dit à voix haute
+            i.removeExtra("annonce");
+            annonceRetour = !visible;   // appli ouverte juste pour l'annonce : elle se referme après
+            lockMode = i.getBooleanExtra("lock", false);
+            setLock(lockMode);
+            if (first) web.loadUrl(BASE + "?annonce=" + Uri.encode(annonce) + (lockMode ? "&lock=1" : ""));
+            else web.evaluateJavascript("window.claireAnnonce && window.claireAnnonce(" + org.json.JSONObject.quote(annonce) + "," + lockMode + ")", null);
+            return;
+        }
         lockMode = talk && i.getBooleanExtra("lock", false);
         setLock(lockMode);
         if (first) web.loadUrl(BASE + (talk ? "?talk=1" + (lockMode ? "&lock=1" : "") : ""));
@@ -117,6 +127,9 @@ public class MainActivity extends Activity {
         }
     }
 
+    @Override protected void onResume() { super.onResume(); visible = true; }
+    @Override protected void onPause() { visible = false; super.onPause(); }
+
     @Override
     public void onBackPressed() {
         if (web.canGoBack()) web.goBack(); else super.onBackPressed();
@@ -148,7 +161,7 @@ public class MainActivity extends Activity {
         }
         /** fin de conversation sur l'écran verrouillé : on revient à l'écran de verrouillage */
         @JavascriptInterface public void done() {
-            runOnUiThread(() -> { if (lockMode) { lockMode = false; setLock(false); moveTaskToBack(true); } });
+            runOnUiThread(() -> { if (lockMode || annonceRetour) { boolean l = lockMode; lockMode = false; annonceRetour = false; if (l) setLock(false); moveTaskToBack(true); } });
         }
         /* empreinte vocale */
         @JavascriptInterface public boolean voiceReady() { WakeService w = WakeService.instance; return w != null && w.voicePrint() != null; }
@@ -169,6 +182,18 @@ public class MainActivity extends Activity {
                 if (Build.VERSION.SDK_INT >= 31 && !am.canScheduleExactAlarms()) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t, pi);
                 else am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t, pi);
             } catch (Exception e) { am.set(AlarmManager.RTC_WAKEUP, t, pi); }
+        }
+        @JavascriptInterface public void prayer(String id, double when, String text) {
+            AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+            PendingIntent pi = ReminderReceiver.priere(MainActivity.this, id, text);
+            long t = (long) when;
+            try {
+                if (Build.VERSION.SDK_INT >= 31 && !am.canScheduleExactAlarms()) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t, pi);
+                else am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t, pi);
+            } catch (Exception e) { am.set(AlarmManager.RTC_WAKEUP, t, pi); }
+        }
+        @JavascriptInterface public void cancelPrayer(String id) {
+            ((AlarmManager) getSystemService(ALARM_SERVICE)).cancel(ReminderReceiver.priere(MainActivity.this, id, ""));
         }
         @JavascriptInterface public void cancelReminder(String id) {
             ((AlarmManager) getSystemService(ALARM_SERVICE)).cancel(ReminderReceiver.pending(MainActivity.this, id, ""));
