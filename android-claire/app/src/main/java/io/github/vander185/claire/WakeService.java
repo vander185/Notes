@@ -136,7 +136,7 @@ public class WakeService extends Service {
         if (enrolling || voicePrint() != null) return;   // avec empreinte, on attend la fin du mot
         String t = "";
         try { t = new JSONObject(json).optString("partial", ""); } catch (Exception ignored) { }
-        if (t.contains("claire")) trigger();
+        if (t.contains("claire")) { voiceOk(false); trigger(); }
     }
 
     private void onFinal(String json) {
@@ -150,7 +150,7 @@ public class WakeService extends Service {
         } catch (Exception ignored) { }
         if (start < 0) return;
         boolean hasPrint = voicePrint() != null;
-        if (!enrolling && (!hasPrint || spk == null)) { trigger(); return; }
+        if (!enrolling && (!hasPrint || spk == null)) { voiceOk(false); trigger(); return; }
         double[] v = embed(start, end);
         if (enrolling) {
             if (v == null) { msg("Pas bien entendu, redites « Claire »"); return; }
@@ -160,7 +160,11 @@ public class WakeService extends Service {
         if (v == null) return;                           // son trop court ou bruit : on ignore
         double sim = cos(v, voicePrint());
         prefs(this).edit().putFloat("last_sim", (float) sim).apply();
-        if (sim >= threshold()) trigger();
+        if (sim >= threshold()) {
+            // voix d'Ahmed reconnue avec le seuil strict : le téléphone verrouillé peut donner accès à ses données
+            voiceOk(sim >= prefs(this).getFloat("vmin", 0.5f) - 0.06);
+            trigger();
+        }
         else pausedUntil = System.currentTimeMillis() + 1200;   // une autre voix
     }
 
@@ -264,6 +268,8 @@ public class WakeService extends Service {
         boolean strict = prefs(this).getBoolean("strict", true);
         return base - (strict ? 0.06 : 0.16);
     }
+    /** mémorise si le dernier réveil vient bien de la voix d'Ahmed (valable une minute, une seule conversation) */
+    private void voiceOk(boolean ok) { prefs(this).edit().putLong("vok_at", ok ? System.currentTimeMillis() : 0).apply(); }
     private void msg(String m) { prefs(this).edit().putString("vmsg", m).apply(); }
 
     void startEnroll() {

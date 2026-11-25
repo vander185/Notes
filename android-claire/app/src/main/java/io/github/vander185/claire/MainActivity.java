@@ -134,6 +134,13 @@ public class MainActivity extends Activity {
             KeyguardManager k = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
             return k != null && k.isKeyguardLocked();
         }
+        /** vrai une seule fois si Claire vient d'être réveillée par la voix d'Ahmed (empreinte vocale reconnue) */
+        @JavascriptInterface public boolean takeVoiceOk() {
+            android.content.SharedPreferences p = WakeService.prefs(MainActivity.this);
+            long t = p.getLong("vok_at", 0);
+            p.edit().putLong("vok_at", 0).apply();
+            return t > 0 && System.currentTimeMillis() - t < 60000;
+        }
         @JavascriptInterface public boolean wakeRunning() { return WakeService.running; }
         @JavascriptInterface public void wake(boolean on) {
             Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("clairewake://" + (on ? "on" : "off")), MainActivity.this, WakeActivity.class);
