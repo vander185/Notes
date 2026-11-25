@@ -265,7 +265,7 @@ async function notesLoad() {
 const nSave = () => mset('notes', NOTES);
 const nDate = t => { const d = new Date(t), now = new Date(); return d.toDateString() === now.toDateString() ? d.toLocaleTimeString('fr-BE', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('fr-BE', { day: '2-digit', month: '2-digit', year: '2-digit' }); };
 let nView = 'list', nSort = 'upd';
-try { nView = localStorage.getItem('nview') || 'list'; nSort = localStorage.getItem('nsort') || 'upd'; } catch (e) {}
+try { if (!localStorage.getItem('nview2')) { localStorage.setItem('nview', 'grid'); localStorage.setItem('nview2', '1'); } nView = localStorage.getItem('nview') || 'grid'; nSort = localStorage.getItem('nsort') || 'upd'; } catch (e) {}
 function notesDraw() {
   const q = $('#nsearch').value.trim().toLowerCase();
   const key = n => nSort === 'cre' ? (n.cre || n.upd) : n.upd;
@@ -349,7 +349,7 @@ $('#nmenu').onclick = async () => {
 };
 const NCOL = { jaune: ['Jaune', '#ffd60a', '🟡'], orange: ['Orange', '#ff9f0a', '🟠'], rouge: ['Rouge', '#ff453a', '🔴'], rose: ['Rose', '#ff375f', '🩷'], violet: ['Violet', '#bf5af2', '🟣'], bleu: ['Bleu', '#0a84ff', '🔵'], ciel: ['Ciel', '#64d2ff', '🩵'], vert: ['Vert', '#30d158', '🟢'], marron: ['Marron', '#ac8e68', '🟤'], gris: ['Gris', '#8e8e93', '🩶'] };
 function nCouleur() { const c = curNote && curNote.col && NCOL[curNote.col]; document.documentElement.style.setProperty('--ncol', c ? c[1] : 'transparent'); document.body.classList.toggle('ncol', !!c); }
-(() => { const st = document.createElement('style'); st.textContent = Object.entries(NCOL).map(([k, x]) => `.ni[data-c="${k}"]{background:linear-gradient(135deg,color-mix(in srgb,${x[1]} 22%,#1c1c1e),color-mix(in srgb,${x[1]} 8%,#1c1c1e))!important;box-shadow:inset 3px 0 0 ${x[1]}!important}.ni[data-c="${k}"] .nm{color:${x[1]}}`).join('') + 'body.ncol #ntitle{border-left:4px solid var(--ncol);padding-left:10px}'; document.head.appendChild(st); })();
+(() => { const st = document.createElement('style'); st.textContent = Object.entries(NCOL).map(([k, x]) => `.ni[data-c="${k}"]{--c:${x[1]};background:linear-gradient(135deg,color-mix(in srgb,${x[1]} 22%,#1c1c1e),color-mix(in srgb,${x[1]} 8%,#1c1c1e))!important;box-shadow:inset 3px 0 0 ${x[1]}!important}.ni[data-c="${k}"] .nm{color:${x[1]}}`).join('') + '#nlist.v-grid .ni[data-c]{box-shadow:none!important;border-color:color-mix(in srgb,var(--c) 35%,transparent)!important}body.ncol #ntitle{border-left:4px solid var(--ncol);padding-left:10px}'; document.head.appendChild(st); })();
 $('#ndel').onclick = async () => {
   if (!curNote) return;
   if (nVide(curNote)) { NOTES = NOTES.filter(n => n !== curNote); curNote = null; notesDraw(); show('notes'); await nSave(); return; }
