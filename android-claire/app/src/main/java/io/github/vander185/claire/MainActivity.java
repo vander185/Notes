@@ -78,6 +78,25 @@ public class MainActivity extends Activity {
                             .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 } catch (Exception e) { photoUri = null; }
                 Intent galerie = new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*");
+                // bouton « Choisir un fichier » : PDF, Word, Excel… → le gestionnaire de fichiers, pas la galerie
+                java.util.LinkedHashSet<String> types = new java.util.LinkedHashSet<>();
+                if (params.getAcceptTypes() != null) for (String a : params.getAcceptTypes()) for (String t : a.split(",")) {
+                    t = t.trim().toLowerCase(); if (t.isEmpty()) continue;
+                    if (t.startsWith(".")) { String m = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(t.substring(1)); if (m != null) types.add(m); }
+                    else types.add(t);
+                }
+                boolean images = types.isEmpty();
+                for (String t : types) if (t.startsWith("image/")) images = true; else { images = false; break; }
+                if (!images) {
+                    photoUri = null;
+                    Intent fichiers = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+                            .putExtra(Intent.EXTRA_MIME_TYPES, types.toArray(new String[0]));
+                    try { startActivityForResult(fichiers, REQ_FICHIER); return true; }
+                    catch (Exception e) {
+                        try { startActivityForResult(Intent.createChooser(new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), "Fichier à lire"), REQ_FICHIER); return true; }
+                        catch (Exception e2) { fichierCb = null; cb.onReceiveValue(null); return false; }
+                    }
+                }
                 Intent choix;
                 if (params.isCaptureEnabled() && photo != null) choix = photo;
                 else { choix = Intent.createChooser(galerie, "Document à lire"); if (photo != null) choix.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{photo}); }
