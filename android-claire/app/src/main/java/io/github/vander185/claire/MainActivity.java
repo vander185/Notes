@@ -30,8 +30,8 @@ import android.webkit.WebViewClient;
  */
 public class MainActivity extends Activity {
     static final String BASE = "https://vander185.github.io/claire/";
-    private static final int REQ_MIC = 3, REQ_FICHIER = 4, REQ_LIEU = 5, REQ_LIEU_FOND = 6, REQ_APPEL = 9, REQ_CONTACTS = 10;
-    private String appelEnAttente = null;
+    private static final int REQ_MIC = 3, REQ_FICHIER = 4, REQ_LIEU = 5, REQ_LIEU_FOND = 6, REQ_APPEL = 9, REQ_CONTACTS = 10, REQ_SMS = 11;
+    private String appelEnAttente = null, smsNum = null, smsTexte = null;
     private ValueCallback<Uri[]> fichierCb;
     private Uri photoUri;
     private WebView web;
@@ -137,6 +137,15 @@ public class MainActivity extends Activity {
         boolean interne = WakeService.jetonOk(this, i);
         boolean talk = interne && i.getBooleanExtra("talk", false);
         String annonce = interne ? i.getStringExtra("annonce") : null;
+        String message = interne ? i.getStringExtra("message") : null;
+        if (message != null) {   // mode voiture : Claire lit le message reçu et propose d'y répondre
+            i.removeExtra("message");
+            lockMode = i.getBooleanExtra("lock", false);
+            setLock(lockMode);
+            if (first) web.loadUrl(BASE + "?message=" + Uri.encode(message) + (lockMode ? "&lock=1" : ""));
+            else web.evaluateJavascript("window.claireMessage && window.claireMessage(" + org.json.JSONObject.quote(message) + "," + lockMode + ")", null);
+            return;
+        }
         if (annonce != null) {   // rappel de prière dit à voix haute
             i.removeExtra("annonce");
             annonceRetour = !visible;   // appli ouverte juste pour l'annonce : elle se referme après
@@ -188,10 +197,24 @@ public class MainActivity extends Activity {
                 && checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, REQ_LIEU_FOND);
         // appel demandé à Claire : autorisé → l'appel part ; refusé → le numéro est juste composé
+        if (code == REQ_SMS && smsNum != null) {
+            String n = smsNum, t = smsTexte; smsNum = smsTexte = null;
+            String r = res.length > 0 && res[0] == PackageManager.PERMISSION_GRANTED ? envoyerSms(n, t) : "refuse";
+            web.evaluateJavascript("window.cxSmsResultat && window.cxSmsResultat(" + org.json.JSONObject.quote(r) + ")", null);
+        }
         if (code == REQ_APPEL && appelEnAttente != null) {
             String n = appelEnAttente; appelEnAttente = null;
             lancerAppel(n, res.length > 0 && res[0] == PackageManager.PERMISSION_GRANTED);
         }
+    }
+
+    private String envoyerSms(String num, String texte) {
+        try {
+            android.telephony.SmsManager sm = Build.VERSION.SDK_INT >= 31 ? getSystemService(android.telephony.SmsManager.class) : android.telephony.SmsManager.getDefault();
+            java.util.ArrayList<String> parts = sm.divideMessage(texte);
+            sm.sendMultipartTextMessage(num, null, parts, null, null);
+            return "envoye";
+        } catch (Exception e) { return "erreur"; }
     }
 
     private void lancerAppel(String num, boolean direct) {
@@ -352,6 +375,23 @@ public class MainActivity extends Activity {
         @JavascriptInterface public boolean appelWhatsApp(String dataId, boolean video) {
             try { return contactsOk() && Repertoire.appelWhatsApp(MainActivity.this, Long.parseLong(dataId), video); } catch (Exception e) { return false; }
         }
+        /* SMS envoyé directement (après accord d'Ahmed dans la conversation) */
+        @JavascriptInterface public String envoyerSms(String num, String texte) {
+            if (num == null || !num.matches("[+\\d][\\d ./()-]{2,24}") || texte == null || texte.trim().isEmpty()) return "invalide";
+            String n = num.replaceAll("[^\\d+]", "");
+            if (checkSelfPermission(Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) return MainActivity.this.envoyerSms(n, texte);
+            smsNum = n; smsTexte = texte;
+            runOnUiThread(() -> requestPermissions(new String[]{Manifest.permission.SEND_SMS}, REQ_SMS));
+            return "autorisation";
+        }
+        /* répondre à un message reçu, directement depuis sa notification */
+        @JavascriptInterface public String repondreNotif(String cle, String texte) {
+            if (!NotifService.autorise(MainActivity.this) || texte == null || texte.trim().isEmpty()) return "erreur";
+            return NotifService.repondre(MainActivity.this, cle, texte);
+        }
+        /* mode voiture */
+        @JavascriptInterface public boolean voiture() { return WakeService.prefs(MainActivity.this).getBoolean("voiture", false); }
+        @JavascriptInterface public void setVoiture(boolean on) { WakeService.prefs(MainActivity.this).edit().putBoolean("voiture", on).apply(); }
         @JavascriptInterface public void cancelReminder(String id) {
             ((AlarmManager) getSystemService(ALARM_SERVICE)).cancel(ReminderReceiver.pending(MainActivity.this, id, ""));
         }

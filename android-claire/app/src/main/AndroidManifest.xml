@@ -22,6 +22,9 @@
     <!-- « Claire, appelle Karim » : appel direct, contacts du téléphone (et appels WhatsApp) -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- « envoie un SMS à Karim » : envoi direct, après accord d'Ahmed -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <queries>
         <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>
