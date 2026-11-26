@@ -286,6 +286,23 @@ public class MainActivity extends Activity {
             WakeService.prefs(MainActivity.this).edit().putString("widget_txt", txt == null || txt.isEmpty() ? "Touche pour parler à Claire" : txt).apply();
             ClaireWidget.majTout(MainActivity.this);
         }
+        /* touche latérale : Claire est-elle l'assistant numérique du téléphone ? */
+        @JavascriptInterface public boolean assistant() {
+            try {
+                if (Build.VERSION.SDK_INT >= 29) {
+                    android.app.role.RoleManager r = (android.app.role.RoleManager) getSystemService(ROLE_SERVICE);
+                    return r != null && r.isRoleHeld(android.app.role.RoleManager.ROLE_ASSISTANT);
+                }
+                String a = android.provider.Settings.Secure.getString(getContentResolver(), "assistant");
+                return a != null && a.startsWith(getPackageName());
+            } catch (Exception e) { return false; }
+        }
+        @JavascriptInterface public void openAssistant() {
+            runOnUiThread(() -> {
+                String[] acts = { android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS, android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS, android.provider.Settings.ACTION_SETTINGS };
+                for (String a : acts) { try { startActivity(new Intent(a)); return; } catch (Exception ignored) { } }
+            });
+        }
         @JavascriptInterface public void cancelReminder(String id) {
             ((AlarmManager) getSystemService(ALARM_SERVICE)).cancel(ReminderReceiver.pending(MainActivity.this, id, ""));
         }
