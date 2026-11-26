@@ -104,6 +104,152 @@ SC.detect = (d, w, h) => {
   return q;
 };
 
+/* ---------- Détection v2 : plusieurs méthodes, notées sur les vrais bords, puis affinées ---------- */
+SC.sobel = (g, w, h) => {
+  const gx = new Float32Array(w * h), gy = new Float32Array(w * h), m = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x, a = g[i - w - 1], b = g[i - w], c = g[i - w + 1], d = g[i - 1], f = g[i + 1], k = g[i + w - 1], l = g[i + w], n = g[i + w + 1];
+    const X = (c + 2 * f + n) - (a + 2 * d + k), Y = (k + 2 * l + n) - (a + 2 * b + c);
+    gx[i] = X; gy[i] = Y; m[i] = Math.hypot(X, Y);
+  }
+  return { gx, gy, m };
+};
+const grow = (src, w, h) => { const o = new Uint8Array(src.length);   // dilatation 3×3
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = y * w + x; if (src[i]) { o[i] = 1; continue; }
+    if ((x > 0 && src[i - 1]) || (x < w - 1 && src[i + 1]) || (y > 0 && src[i - w]) || (y < h - 1 && src[i + w]) || (x > 0 && y > 0 && src[i - w - 1]) || (x < w - 1 && y > 0 && src[i - w + 1]) || (x > 0 && y < h - 1 && src[i + w - 1]) || (x < w - 1 && y < h - 1 && src[i + w + 1])) o[i] = 1; }
+  return o; };
+const shrink = (src, w, h) => { const inv = new Uint8Array(src.length); for (let i = 0; i < src.length; i++) inv[i] = 1 - src[i]; const g2 = grow(inv, w, h); for (let i = 0; i < g2.length; i++) g2[i] = 1 - g2[i]; return g2; };
+// plus grande zone d'un masque → quadrilatère (ou null)
+SC.maskQuad = (m, w, h, pad = 0) => {
+  const lab = new Int32Array(w * h), st = new Int32Array(w * h); let best = 0, bestN = 0, cur = 0;
+  for (let i = 0; i < m.length; i++) {
+    if (!m[i] || lab[i]) continue; cur++; let sp = 0, n = 0; st[sp++] = i; lab[i] = cur;
+    while (sp) { const p = st[--sp]; n++; const x = p % w, y = (p / w) | 0;
+      if (x > 0 && m[p - 1] && !lab[p - 1]) { lab[p - 1] = cur; st[sp++] = p - 1; }
+      if (x < w - 1 && m[p + 1] && !lab[p + 1]) { lab[p + 1] = cur; st[sp++] = p + 1; }
+      if (y > 0 && m[p - w] && !lab[p - w]) { lab[p - w] = cur; st[sp++] = p - w; }
+      if (y < h - 1 && m[p + w] && !lab[p + w]) { lab[p + w] = cur; st[sp++] = p + w; } }
+    if (n > bestN) { bestN = n; best = cur; }
+  }
+  const ratio = bestN / (w * h);
+  if (!best || ratio < 0.06 || ratio > 0.97) return null;
+  const pts = []; let tL = 0, tR = 0, tT = 0, tB = 0;
+  for (let y = 0; y < h; y++) { let a = -1, b = -1; const r = y * w;
+    for (let x = 0; x < w; x++) if (lab[r + x] === best) { if (a < 0) a = x; b = x; }
+    if (a >= 0) { pts.push([a - pad, y], [b + 1 + pad, y]); if (a === 0) tL++; if (b === w - 1) tR++; if (y === 0) tT++; if (y === h - 1) tB++; } }
+  if ((tL > h * .5) + (tR > h * .5) + (tT > 0 && tB > 0 ? 1 : 0) >= 3) return null;
+  const H = SC.hull(pts); if (H.length < 4) return null;
+  let q = SC.order(H); if (!q) return null;
+  let idx = q.map(p => H.findIndex(h2 => h2[0] === p[0] && h2[1] === p[1]));
+  for (let it = 0; it < 3; it++) for (let k = 0; k < 4; k++) {
+    let bi = idx[k], ba = -1;
+    for (let j = 0; j < H.length; j++) { const tq = idx.map((v, z) => H[z === k ? j : v]); const a = SC.area(tq); if (a > ba && SC.convex(tq)) { ba = a; bi = j; } }
+    idx[k] = bi;
+  }
+  q = SC.order(idx.map(i => H[i])); if (!q || !SC.convex(q)) return null;
+  if (SC.area(q) < SC.area(H) * .8) return null;
+  return q.map(p => [Math.max(0, Math.min(w, p[0])), Math.max(0, Math.min(h, p[1]))]);
+};
+// méthode B : « couleur papier » (clair et peu coloré) — feuille blanche sur bois, tissu, table colorée
+SC.detectPaper = (d, w, h) => {
+  const s = new Float32Array(w * h);
+  for (let i = 0, j = 0; i < s.length; i++, j += 4) { const r = d[j], g = d[j + 1], b = d[j + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b); s[i] = Math.max(0, Math.min(255, (r * .299 + g * .587 + b * .114) - 1.3 * (mx - mn))); }
+  const sb = SC.blur(s, w, h, 2), { t, sep } = SC.otsu(sb);
+  if (sep < 0.04 * 255 / 2) return null;
+  let m = new Uint8Array(w * h); for (let i = 0; i < m.length; i++) m[i] = sb[i] > t ? 1 : 0;
+  m = grow(shrink(m, w, h), w, h);
+  return SC.maskQuad(m, w, h);
+};
+// méthode C : zone fermée par des bords nets — feuille blanche sur table blanche, ombres, papier coloré
+SC.detectEdges = (d, w, h, G) => {
+  const g = SC.blur(SC.gray(d, w, h), w, h, 1), { m } = G || SC.sobel(g, w, h);
+  const srt = Float32Array.from(m).sort(), thr = Math.max(14, srt[(m.length * .5) | 0] * 3.2);   // au-dessus du bruit de l'image
+  let e = new Uint8Array(w * h); for (let i = 0; i < m.length; i++) e[i] = m[i] > thr ? 1 : 0;
+  const st = new Int32Array(w * h);
+  { const lb = new Int32Array(w * h); let cur = 0;   // on retire les petits points isolés (grain, bruit)
+    for (let i = 0; i < e.length; i++) { if (!e[i] || lb[i]) continue; cur++; let sp = 0, n = 0; const mem = []; st[sp++] = i; lb[i] = cur;
+      while (sp) { const p = st[--sp]; n++; mem.push(p); const x = p % w, y = (p / w) | 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue; const j = yy * w + xx; if (e[j] && !lb[j]) { lb[j] = cur; st[sp++] = j; } } }
+      if (n < 18) for (const p of mem) e[p] = 0; } }
+  e = grow(grow(e, w, h), w, h);
+  const out = new Uint8Array(w * h); let sp = 0;   // fond atteint depuis le bord de l'image
+  const push = i => { if (!e[i] && !out[i]) { out[i] = 1; st[sp++] = i; } };
+  for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+  while (sp) { const p = st[--sp], x = p % w, y = (p / w) | 0;
+    if (x > 0) push(p - 1); if (x < w - 1) push(p + 1); if (y > 0) push(p - w); if (y < h - 1) push(p + w); }
+  // tout ce qui n'est pas atteint depuis le bord = la feuille avec son contour (le texte à l'intérieur ne gêne plus)
+  const inn = new Uint8Array(w * h); for (let i = 0; i < inn.length; i++) inn[i] = out[i] ? 0 : 1;
+  return SC.maskQuad(shrink(inn, w, h), w, h, -1);
+};
+// note d'un cadre : force moyenne du bord perpendiculaire le long des 4 côtés (le plus faible compte double)
+SC.edgeScore = (G, w, h, q) => {
+  const per = [];
+  for (let k = 0; k < 4; k++) {
+    const a = q[k], b = q[(k + 1) % 4], L = dist(a, b); if (L < 4) return { s: 0, min: 0 };
+    const nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L; let s = 0, n = 0;
+    for (let t = .08; t <= .92; t += .028) {
+      let bm = 0;
+      for (let o = -2; o <= 2; o++) { const x = Math.round(a[0] + (b[0] - a[0]) * t + nx * o), y = Math.round(a[1] + (b[1] - a[1]) * t + ny * o);
+        if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) continue; const i = y * w + x, v = Math.abs(G.gx[i] * nx + G.gy[i] * ny); if (v > bm) bm = v; }
+      s += bm; n++;
+    }
+    per.push(n ? s / n : 0);
+  }
+  const mn = Math.min(...per), mean = per.reduce((x, y) => x + y, 0) / 4;
+  return { s: mn * .6 + mean * .4, min: mn };
+};
+SC.detect2 = (d, w, h) => {
+  const g = SC.blur(SC.gray(d, w, h), w, h, 1), G = SC.sobel(g, w, h), A = w * h;
+  const C = [];
+  const tryq = f => { let q = null; try { q = f(); } catch (e) {} if (q) { const sc = SC.edgeScore(G, w, h, q); C.push({ q, ...sc, s: sc.s * (.8 + .2 * Math.sqrt(SC.area(q) / A)) }); } };
+  tryq(() => SC.detect(d, w, h)); tryq(() => SC.detectPaper(d, w, h)); tryq(() => SC.detectEdges(d, w, h, G));
+  C.sort((a, b) => b.s - a.s);
+  const best = C.find(c => c.min >= 22);   // chaque côté doit vraiment suivre un bord
+  return best ? best.q : null;
+};
+// Affinage : chaque côté est recalé sur le bord réel (au demi-pixel), puis les coins = intersections des droites
+SC.refine = (g, w, h, q, R) => {
+  R = R || Math.max(4, Math.hypot(w, h) * .02);
+  const S = (x, y) => { if (x < 0 || y < 0 || x > w - 1.001 || y > h - 1.001) return NaN; const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0, i = y0 * w + x0;
+    return (g[i] * (1 - fx) + g[i + 1] * fx) * (1 - fy) + (g[i + w] * (1 - fx) + g[i + w + 1] * fx) * fy; };
+  const cx = q.reduce((a, p) => a + p[0], 0) / 4, cy = q.reduce((a, p) => a + p[1], 0) / 4;
+  const lines = [];
+  for (let k = 0; k < 4; k++) {
+    const a = q[k], b = q[(k + 1) % 4], L = dist(a, b);
+    let nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L;
+    const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2; if ((cx - mx) * nx + (cy - my) * ny > 0) { nx = -nx; ny = -ny; }   // normale vers l'extérieur
+    const P = [];
+    const N = Math.max(12, Math.min(80, Math.round(L / 6)));
+    for (let j = 0; j < N; j++) {
+      const t = .06 + .88 * j / (N - 1), px = a[0] + (b[0] - a[0]) * t, py = a[1] + (b[1] - a[1]) * t;
+      let bv = 0, bs = 0, sg = 0;
+      for (let s = -R; s <= R; s += .5) { const v = S(px + nx * (s + 1.5), py + ny * (s + 1.5)) - S(px + nx * (s - 1.5), py + ny * (s - 1.5)); if (Math.abs(v) > bv) { bv = Math.abs(v); bs = s; sg = Math.sign(v); } }
+      if (bv > 9) P.push([px + nx * bs, py + ny * bs, sg]);
+    }
+    if (P.length >= 8) {   // garde le sens de contraste majoritaire (évite le texte près du bord)
+      const pos = P.filter(p => p[2] > 0).length, keep = pos >= P.length - pos ? 1 : -1;
+      let Q = P.filter(p => p[2] === keep);
+      let ln = null;
+      for (let it = 0; it < 4 && Q.length >= 6; it++) {
+        const n = Q.length, mx2 = Q.reduce((s, p) => s + p[0], 0) / n, my2 = Q.reduce((s, p) => s + p[1], 0) / n;
+        let sxx = 0, syy = 0, sxy = 0; Q.forEach(p => { const dx = p[0] - mx2, dy = p[1] - my2; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; });
+        const th = .5 * Math.atan2(2 * sxy, sxx - syy), ux = Math.cos(th), uy = Math.sin(th);
+        ln = { x: mx2, y: my2, ux, uy };
+        const r = Q.map(p => Math.abs(-(p[0] - mx2) * uy + (p[1] - my2) * ux)), md = r.slice().sort((x, y) => x - y)[r.length >> 1];
+        const lim = Math.max(1, md * 2.5); const Q2 = Q.filter((p, i) => r[i] <= lim); if (Q2.length === Q.length) break; Q = Q2;
+      }
+      if (ln && Q.length >= Math.max(6, P.length * .35)) { lines.push(ln); continue; }
+    }
+    const L2 = dist(a, b); lines.push({ x: a[0], y: a[1], ux: (b[0] - a[0]) / L2, uy: (b[1] - a[1]) / L2, keep: 1 });   // bord peu net : côté d'origine
+  }
+  const meet = (l1, l2) => { const den = l1.ux * l2.uy - l1.uy * l2.ux; if (Math.abs(den) < 1e-6) return null; const t = ((l2.x - l1.x) * l2.uy - (l2.y - l1.y) * l2.ux) / den; return [l1.x + l1.ux * t, l1.y + l1.uy * t]; };
+  const out = [];
+  for (let k = 0; k < 4; k++) { const p = meet(lines[(k + 3) % 4], lines[k]); if (!p || dist(p, q[k]) > R * 3) out.push(q[k].slice()); else out.push([Math.max(0, Math.min(w, p[0])), Math.max(0, Math.min(h, p[1]))]); }
+  const o = SC.order(out); if (!o || !SC.convex(o)) return q;
+  const ar = SC.area(o) / SC.area(q); return ar > .8 && ar < 1.25 ? o : q;
+};
+
 // Homographie : rectangle (0,0)-(W,H) → quadrilatère q (coordonnées source)
 SC.homog = (q, W, H) => {
   const s = [[0, 0], [W, 0], [W, H], [0, H]], A = [], b = [];
@@ -261,51 +407,110 @@ SC.TYPES = [
   [/ordre\s+du\s+jour|compte[- ]rendu|proc[eè]s[- ]verbal\s+de\s+r[ée]union|notulen/i, 'Compte rendu']
 ];
 SC.MOIS = { janvier: 1, février: 2, fevrier: 2, mars: 3, avril: 4, mai: 5, juin: 6, juillet: 7, août: 8, aout: 8, septembre: 9, octobre: 10, novembre: 11, décembre: 12, decembre: 12, januari: 1, februari: 2, maart: 3, april: 4, mei: 5, juni: 6, juli: 7, augustus: 8, oktober: 10, december: 12, november: 11, september: 9, october: 10, january: 1, february: 2, march: 3, june: 6, july: 7, august: 8 };
-SC.titre = texte => {
+// émetteurs connus (Belgique surtout) : un vrai nom vaut mieux qu'une ligne d'adresse
+SC.EMET = [
+  [/engie|electrabel/i, 'Engie'], [/luminus/i, 'Luminus'], [/totalenergies|lampiris/i, 'TotalEnergies'], [/eneco/i, 'Eneco'], [/mega\b/i, 'Mega'], [/octa\+/i, 'Octa+'], [/sibelga/i, 'Sibelga'], [/ores\b/i, 'ORES'], [/fluvius/i, 'Fluvius'],
+  [/vivaqua/i, 'Vivaqua'], [/\bswde\b/i, 'SWDE'], [/proximus/i, 'Proximus'], [/\borange\b/i, 'Orange'], [/telenet/i, 'Telenet'], [/\bvoo\b/i, 'VOO'], [/\bbase\b.*(mobile|gsm)|base\s+company/i, 'BASE'], [/scarlet/i, 'Scarlet'], [/digi\b/i, 'Digi'],
+  [/spf\s+finances|fod\s+financi[eë]n|myminfin/i, 'SPF Finances'], [/solidaris/i, 'Solidaris'], [/partenamut/i, 'Partenamut'], [/mutualit[ée]\s+chr[ée]tienne|\bmc\.be|christelijke\s+mutualiteit|\bcm\b/i, 'Mutualité chrétienne'], [/helan/i, 'Helan'], [/\bcaami\b|hziv/i, 'CAAMI'],
+  [/\bonem\b|\brva\b/i, 'ONEM'], [/\bcpas\b|\bocmw\b/i, 'CPAS'], [/securex/i, 'Securex'], [/partena/i, 'Partena'], [/acerta/i, 'Acerta'], [/liantis/i, 'Liantis'], [/\bsd\s?worx/i, 'SD Worx'], [/actiris/i, 'Actiris'], [/\bforem\b/i, 'Forem'], [/\bvdab\b/i, 'VDAB'],
+  [/belfius/i, 'Belfius'], [/bnp\s+paribas|\bfortis\b/i, 'BNP Paribas Fortis'], [/\bing\s+(belgique|belgi[eë]|bank)|\bing\.be/i, 'ING'], [/\bkbc\b/i, 'KBC'], [/argenta/i, 'Argenta'], [/crelan/i, 'Crelan'], [/beobank/i, 'Beobank'], [/\bbpost\b/i, 'bpost'],
+  [/ag\s+insurance/i, 'AG Insurance'], [/\baxa\b/i, 'AXA'], [/ethias/i, 'Ethias'], [/\bp\s?&\s?v\b/i, 'P&V'], [/baloise/i, 'Baloise'], [/allianz/i, 'Allianz'],
+  [/\bsncb\b|\bnmbs\b/i, 'SNCB'], [/\bstib\b|\bmivb\b/i, 'STIB'], [/de\s+lijn/i, 'De Lijn'], [/\btec\b/i, 'TEC'], [/brussels\s+airlines/i, 'Brussels Airlines'], [/ryanair/i, 'Ryanair'], [/\btui\b/i, 'TUI'],
+  [/amazon/i, 'Amazon'], [/bol\.com/i, 'Bol.com'], [/coolblue/i, 'Coolblue'], [/mediamarkt/i, 'MediaMarkt'], [/vanden\s?borre/i, 'Vanden Borre'], [/krefel/i, 'Krëfel'], [/\bikea\b/i, 'IKEA'], [/colruyt/i, 'Colruyt'], [/delhaize/i, 'Delhaize'], [/carrefour/i, 'Carrefour'], [/\baldi\b/i, 'Aldi'], [/\blidl\b/i, 'Lidl'], [/\bmakro\b/i, 'Makro'], [/action\b.*\bbv\b|\baction\.com/i, 'Action'],
+  [/haythem\s*food/i, 'Haythem Food'], [/media\s*shield/i, 'Media Shield']
+];
+// de quoi parle le document
+SC.SUJETS = [
+  [/[ée]lectricit[ée]|elektriciteit|\bkwh\b/i, 'électricité'], [/\bgaz\b|aardgas/i, 'gaz'], [/\beau\b|\bwater\b|\bm3\b|m³/i, 'eau'], [/internet|fibre|\bwi-?fi\b|t[ée]l[ée]vision|\btv\b/i, 'internet'], [/abonnement\s+mobile|\bgsm\b|carte\s+sim|forfait\s+mobile/i, 'mobile'],
+  [/\bloyer\b|\bhuur\b|charges\s+locatives/i, 'loyer'], [/v[ée]hicule|voiture|immatriculation|plaque|\bauto\b|\bomnium\b/i, 'voiture'], [/habitation|incendie|woning|\bbrand\b/i, 'habitation'],
+  [/hospitalisation|consultation|\bsoins?\b|m[ée]decin|pharmacie|dentiste|kin[ée]/i, 'santé'], [/[ée]cole|scolaire|\bschool\b|universit/i, 'école'], [/salaire|\bloon\b|r[ée]mun[ée]ration|p[ée]cule/i, 'salaire'],
+  [/pr[êe]t\s+hypoth|cr[ée]dit\s+hypoth|hypothe(ek|cair)|\blening\b|pr[êe]t\s+personnel/i, 'prêt'], [/allocations?\s+familiales|groeipakket|famiris|famiwal|kidslife/i, 'allocations familiales'], [/ch[ôo]mage|werkloosheid/i, 'chômage'],
+  [/pr[ée]compte\s+immobilier|onroerende\s+voorheffing/i, 'précompte immobilier'], [/imp[ôo]t\s+des\s+personnes|personenbelasting|d[ée]claration\s+fiscale|\bipp\b/i, 'impôt sur les revenus'],
+  [/stationnement|parking/i, 'stationnement'], [/exc[eè]s\s+de\s+vitesse|\bradar\b|snelheid/i, 'excès de vitesse'], [/train|\bsncb\b|\bnmbs\b/i, 'train'], [/\bvol\b|flight|a[ée]roport|embarquement/i, 'vol'],
+  [/\blivraison|\bcolis\b|pakket/i, 'livraison'], [/\br[ée]paration|\bentretien\b|herstelling/i, 'réparation'], [/\btravaux\b|r[ée]novation|verbouwing/i, 'travaux']
+];
+// cartes (mode Carte) : reconnues avant le reste
+SC.CARTES = [
+  [/identiteitskaart|carte\s+d.?identit|identity\s+card|personalausweis|\bbelgi(que|[eë]).{0,40}\bidentit/i, 'Carte d’identité'],
+  [/permis\s+de\s+conduire|rijbewijs|driving\s+licen[cs]e|f[üu]hrerschein/i, 'Permis de conduire'],
+  [/passeport|paspoort|passport/i, 'Passeport'],
+  [/titre\s+de\s+s[ée]jour|verblijfs(titel|kaart)|residence\s+permit/i, 'Titre de séjour'],
+  [/certificat\s+d.?immatriculation|inschrijvingsbewijs|carte\s+grise/i, 'Carte grise'],
+  [/carte\s+europ[ée]enne|european\s+health|\behic\b|mutualit|ziekenfonds/i, 'Carte de mutuelle'],
+  [/carte\s+(de\s+)?(fid[ée]lit[ée]|client)|klantenkaart/i, 'Carte de fidélité'],
+  [/\bvisa\b|mastercard|maestro|bancontact|valid\s+thru|expires?\s+end|debit\b/i, 'Carte bancaire']
+];
+SC.MOISN = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+// types où la période compte (on écrit « novembre 2026 », jamais une suite de chiffres)
+const PERIODE = /^(Facture|Note de crédit|Fiche de paie|Relevé bancaire|Impôts|Rappel de paiement|Ticket de caisse|Assurance|Bulletin)$/;
+const VIDES = new Set('dans pour avec sans sous chez entre leurs cette notre votre vous nous elles sont avoir être était être plus moins tout toute tous toutes faire fait comme mais donc ainsi aussi alors après avant depuis encore jamais toujours votre total date page client numéro montant adresse merci madame monsieur bonjour cordialement selon partir dont autre autres même mêmes leur leurs celui celle ceux elle elles sera seront peut doit doivent quel quelle quels quelles here there with from this that your have been will which their about would these other into more some only than then them were what when where while shall voor zijn deze niet door naar maar heeft worden wordt over geen meer onder tussen uw jullie onze'.split(' '));
+SC.titre = (texte, genre) => {
   const t = (texte || '').replace(/— Page \d+ —/g, '').replace(/[ \t]+/g, ' ');
   const lignes = t.split(/\n/).map(l => l.trim()).filter(l => l.length > 1);
   if (!lignes.length) return '';
   const debut = lignes.slice(0, 25).join('\n'), propre = s => s.replace(/[\\/:*?"<>|_]+/g, ' ').replace(/\s+/g, ' ').replace(/^[\s\-–—.,;]+|[\s\-–—.,;]+$/g, '').trim();
-  // genre : cherché d'abord en haut du document
-  let type = '', motif = null;
-  for (const [re, nom] of SC.TYPES) if (re.test(debut)) { type = nom; motif = re; break; }
-  if (!type) for (const [re, nom] of SC.TYPES) if (re.test(t)) { type = nom; motif = re; break; }
-  // numéro juste après le mot (Facture N° 2026-118)
-  let num = '';
-  if (motif) { const m = t.match(new RegExp('(?:' + motif.source + ')[^\\n\\d]{0,14}?(?:n[°o.º]|num[ée]ro|nr\\.?|no\\.?|#)?\\s*[:.]?\\s*([A-Z]{0,4}[-/ ]?\\d[\\w\\-/.]{1,18})', 'i'));
-    if (m) { num = m[m.length - 1].replace(/[.\-/]+$/, ''); if (/^\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}$/.test(num)) num = ''; } }
-  // date
-  let date = '';
-  const dm = t.match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](20\d{2}|\d{2})\b/) || null;
-  if (dm) { const j = +dm[1], mo = +dm[2], a = dm[3].length === 2 ? 2000 + +dm[3] : +dm[3]; if (j >= 1 && j <= 31 && mo >= 1 && mo <= 12) date = `${String(j).padStart(2, '0')}-${String(mo).padStart(2, '0')}-${a}`; }
-  if (!date) { const dl = t.match(/\b(\d{1,2})\s+([a-zéûè]+)\s+(20\d{2})\b/i); if (dl && SC.MOIS[dl[2].toLowerCase()]) date = `${String(+dl[1]).padStart(2, '0')}-${String(SC.MOIS[dl[2].toLowerCase()]).padStart(2, '0')}-${dl[3]}`; }
-  // émetteur : première ligne « nom propre » du haut (pas d'adresse, pas de chiffres, pas le mot du genre)
-  const bruit = /\b(rue|avenue|av\.|chauss[ée]e|boulevard|bd|place|straat|laan|steenweg|t[ée]l|tel\.|gsm|fax|e-?mail|www|http|tva|btw|iban|bic|bce|kbo|page|date|client|total|montant|objet)\b|@|\d{3,}/i;
-  let qui = '';
+  const joli = s => (s === s.toUpperCase() && s.length > 3) ? s.toLowerCase().replace(/(^|\s|-|')\S/g, c => c.toUpperCase()) : s;
+  const lisible = s => { const L = (s.match(/[A-Za-zÀ-ÿ]/g) || []).length; return L >= 3 && L / s.length > .7 && /[aeiouyàâéèêëîïôûù]/i.test(s) && !/(.)\1{3,}/.test(s); };
+  // émetteur : nom connu, sinon première ligne « nom propre » du haut (pas d'adresse, pas de chiffres)
+  let qui = ''; for (const [re, nom] of SC.EMET) if (re.test(debut)) { qui = nom; break; }
+  if (!qui) for (const [re, nom] of SC.EMET) if (re.test(t)) { qui = nom; break; }
+  const bruit = /\b(rue|avenue|av\.|chauss[ée]e|boulevard|bd|place|straat|laan|steenweg|t[ée]l|tel\.|gsm|fax|e-?mail|www|http|tva|btw|iban|bic|bce|kbo|page|date|client|total|montant|objet|facture|madame|monsieur|cher|ch[eè]re|bruxelles|brussel)\b|@|\d/i;
+  let ligne1 = '';   // première ligne « nom propre » du haut
   for (const l0 of lignes.slice(0, 10)) {
     for (const l of l0.split(/\s[—–|\-]\s|,/)) { const s = propre(l);
-      if (s.length < 3 || s.length > 38 || bruit.test(s) || (motif && motif.test(s))) continue;
-      const lettres = (s.match(/[A-Za-zÀ-ÿ]/g) || []).length; if (lettres / s.length < .7 || s.split(' ').length > 5) continue;
-      qui = s; break; }
-    if (qui) break;
+      if (s.length < 3 || s.length > 32 || bruit.test(s) || !lisible(s) || s.split(' ').length > 4) continue;
+      ligne1 = joli(s); break; }
+    if (ligne1) break;
   }
-  if (qui === qui.toUpperCase() && qui.length > 3) qui = qui.toLowerCase().replace(/(^|\s|-)\S/g, c => c.toUpperCase());
+  const connu = !!qui; if (!qui) qui = ligne1;
+  // cartes
+  for (const [re, nom] of SC.CARTES) if (re.test(t)) return nom === 'Carte bancaire' || nom === 'Carte de mutuelle' || nom === 'Carte de fidélité' ? [nom, qui].filter(Boolean).join(' – ') : nom;
+  if (genre === 'carte') {   // carte de visite : un nom + un téléphone ou un e-mail
+    if (/@|\+?\d[\d .\/]{7,}/.test(t) && ligne1) return 'Carte de visite – ' + ligne1 + (connu && qui !== ligne1 ? ' (' + qui + ')' : '');
+    return qui ? 'Carte – ' + qui : '';
+  }
+  // genre du document
+  let type = '';
+  for (const [re, nom] of SC.TYPES) if (re.test(debut)) { type = nom; break; }
+  if (!type) for (const [re, nom] of SC.TYPES) if (re.test(t)) { type = nom; break; }
+  // sujet
+  let sujet = ''; for (const [re, nom] of SC.SUJETS) if (re.test(t)) { sujet = nom; break; }
+  if (type === 'Impôts' && (sujet === 'impôt sur les revenus' || sujet === 'précompte immobilier')) { type = ''; sujet = sujet.charAt(0).toUpperCase() + sujet.slice(1); }
+  // période en toutes lettres : « novembre 2026 »
+  let mois = 0, an = 0;
+  const dm = t.match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](20\d{2})\b/);
+  if (dm && +dm[2] >= 1 && +dm[2] <= 12) { mois = +dm[2]; an = +dm[3]; }
+  if (!mois) { const dl = t.match(/\b(?:\d{1,2}\s+)?([a-zéûè]+)\s+(20\d{2})\b/i); if (dl && SC.MOIS[dl[1].toLowerCase()]) { mois = SC.MOIS[dl[1].toLowerCase()]; an = +dl[2]; } }
+  const periode = mois ? SC.MOISN[mois - 1] + ' ' + an : '';
   // courrier : la ligne « Objet : … »
-  const obj = t.match(/(?:^|\n)\s*(?:objet|concerne|betreft|subject)\s*:\s*([^\n]{3,60})/i);
+  const om = t.match(/(?:^|\n)\s*(?:objet|concerne|betreft|subject|re)\s*:\s*([^\n]{3,70})/i);
+  const objet = om ? propre(om[1].replace(/\b(n[°o]|ref|réf)\.?\s*[\w\-\/.]*\d[\w\-\/.]*/gi, '').replace(/\d[\d\-\/. ]{3,}/g, '')) : '';
   let titre = '';
-  if (type && qui && qui.toLowerCase().startsWith(type.toLowerCase())) titre = qui;
-  else if (type) titre = [type + (num ? ' ' + num : ''), qui, date].filter(Boolean).join(' – ');
-  else if (obj) titre = [propre(obj[1]), qui].filter(Boolean).join(' – ');
-  else {   // pas de genre reconnu : la première vraie ligne de titre
-    const tl = lignes.slice(0, 8).map(propre).find(s => s.length >= 4 && s.length <= 60 && (s.match(/[A-Za-zÀ-ÿ]/g) || []).length / s.length > .6);
-    if (tl) titre = tl.length > 50 ? tl.slice(0, 50).replace(/\s\S*$/, '') + '…' : tl;
+  if (/^(Compte rendu|Recette|CV|Notice|Menu|Convocation|Attestation|Contrat|Certificat médical|Bulletin)$/.test(type)) {   // ces documents ont un vrai titre : on le garde
+    const tw = type.split(' ')[0].toLowerCase();
+    const tl = lignes.slice(0, 8).map(propre).map(x => x.replace(new RegExp('^' + tw + '\\S*\\s*(?:(?:de\\s+la|du|des|de|d\'|pour|:)\\s*)?', 'i'), '')).find(x => x.length >= 4 && x.length <= 60 && lisible(x) && !/\d{3,}/.test(x) && !SC.TYPES.some(([re]) => re.test(x)));
+    if (tl) return propre(type + ' – ' + joli(tl.length > 50 ? tl.slice(0, 50).replace(/\s\S*$/, '') : tl)).slice(0, 80);
   }
-  titre = propre(titre).slice(0, 80);
-  return titre;
+  if (type === 'Ticket de caisse' && dm) titre = [type + (qui ? ' ' + qui : ''), +dm[1] + ' ' + SC.MOISN[+dm[2] - 1] + ' ' + dm[3]].join(' – ');
+  else if (type) titre = [type + (qui ? ' ' + qui : ''), sujet, PERIODE.test(type) ? periode : ''].filter(Boolean).join(' – ');
+  else if (objet && lisible(objet)) titre = [objet.charAt(0).toUpperCase() + objet.slice(1), qui].filter(Boolean).join(' – ');
+  else if (sujet && qui) titre = [qui, sujet].join(' – ');
+  else {
+    // pas de genre : la première vraie ligne de titre (des mots, pas des chiffres)
+    const tl = lignes.slice(0, 8).map(propre).find(x => x.length >= 6 && x.length <= 60 && lisible(x) && !/\d{3,}/.test(x) && x.split(' ').length >= 2);
+    if (tl) titre = joli(tl.length > 50 ? tl.slice(0, 50).replace(/\s\S*$/, '') : tl);
+    else {   // sinon : les mots qui reviennent le plus
+      const n = {}; (t.toLowerCase().match(/[a-zà-ÿ]{5,}/g) || []).forEach(w => { if (!VIDES.has(w)) n[w] = (n[w] || 0) + 1; });
+      const top = Object.entries(n).filter(([, c]) => c >= 2).sort((x, y) => y[1] - x[1]).slice(0, 3).map(x => x[0]);
+      if (top.length) titre = (qui ? qui + ' – ' : '') + top.join(', ');
+      else if (qui) titre = qui;
+    }
+  }
+  return propre(titre).replace(/\s+–\s+–\s+/g, ' – ').slice(0, 80);
 };
 
 /* ---------- PDF (sans bibliothèque) : une image JPEG par page ---------- */
-SC.pdf = pages => {   // pages : [{ jpg: Uint8Array, w, h }]
+SC.pdf = (pages, size) => {   // pages : [{ jpg: Uint8Array, w, h }] ; size : 'auto' (largeur A4) | 'a4' | 'lettre'
   const te = s => new TextEncoder().encode(s), parts = [], offs = []; let len = 0;
   const add = b => { if (typeof b === 'string') b = te(b); parts.push(b); len += b.length; };
   const obj = (n, body) => { offs[n] = len; add(`${n} 0 obj\n`); body(); add('\nendobj\n'); };
@@ -315,8 +520,12 @@ SC.pdf = pages => {   // pages : [{ jpg: Uint8Array, w, h }]
   obj(2, () => add(`<< /Type /Pages /Kids [${kids}] /Count ${n} >>`));
   pages.forEach((p, i) => {
     const pn = 3 + i * 3, cn = pn + 1, im = pn + 2;
-    const PW = 595.28, PH = +(PW * p.h / p.w).toFixed(2);   // largeur A4, hauteur selon la page
-    const cs = `q ${PW} 0 0 ${PH} 0 0 cm /Im0 Do Q`;
+    let PW = 595.28, PH = +(PW * p.h / p.w).toFixed(2), iw = PW, ih = PH, ix = 0, iy = 0;   // largeur A4, hauteur selon la page
+    if (size === 'a4' || size === 'lettre') {   // vrai format de page : l'image est centrée, sans déformation
+      [PW, PH] = size === 'a4' ? [595.28, 841.89] : [612, 792]; if (p.w > p.h) [PW, PH] = [PH, PW];
+      const k = Math.min(PW / p.w, PH / p.h); iw = +(p.w * k).toFixed(2); ih = +(p.h * k).toFixed(2); ix = +((PW - iw) / 2).toFixed(2); iy = +((PH - ih) / 2).toFixed(2);
+    }
+    const cs = `q ${iw} 0 0 ${ih} ${ix} ${iy} cm /Im0 Do Q`;
     obj(pn, () => add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PW} ${PH}] /Resources << /XObject << /Im0 ${im} 0 R >> >> /Contents ${cn} 0 R >>`));
     obj(cn, () => { add(`<< /Length ${cs.length} >>\nstream\n`); add(cs); add('\nendstream'); });
     obj(im, () => { add(`<< /Type /XObject /Subtype /Image /Width ${p.w} /Height ${p.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.jpg.length} >>\nstream\n`); add(p.jpg); add('\nendstream'); });
@@ -421,21 +630,77 @@ const css = `
 .scanv{width:100%;height:100%;overflow-y:auto;padding:12px 10px 30px;display:flex;flex-direction:column;align-items:center;gap:12px;-webkit-overflow-scrolling:touch}
 .scanv img{max-width:100%;background:#fff;box-shadow:0 6px 20px #000a;border-radius:2px}
 .cell .scb{position:absolute;left:6px;bottom:6px;background:#000b;color:#f3dc9a;font-size:11px;font-weight:700;padding:2px 7px;border-radius:9px}
+/* ---- v2 : finitions ---- */
+#scan{--sa:var(--acc,#e5b400);--ok2:#34d07a}
+#scan .stop{gap:8px}
+#scan .ttl{flex:1;text-align:center;line-height:1.15}
+#scan .ttl h3{font-size:16px;color:#fff}
+#scan .ttl small{display:block;font-size:11.5px;color:#ffffffa0;font-weight:500;margin-top:1px}
+#scan .rb{width:40px;height:40px;background:#0007;box-shadow:inset 0 0 0 1px #ffffff1f;font-size:17px;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);transition:background .2s,color .2s,transform .12s}
+#scan .rb:active{transform:scale(.92)}
+#scan .rb.pill{width:auto;padding:0 12px;border-radius:20px;font-size:12px;font-weight:800;letter-spacing:.06em;color:#ffffffb0}
+#scan .rb.pill.on{background:var(--sa);color:#1d1503;box-shadow:0 4px 14px #0006}
+#scGrid{position:absolute;inset:0;pointer-events:none}
+#scGrid i{position:absolute;background:#ffffff38}
+#scGrid i:nth-child(1){left:33.33%;top:0;bottom:0;width:1px}#scGrid i:nth-child(2){left:66.66%;top:0;bottom:0;width:1px}
+#scGrid i:nth-child(3){top:33.33%;left:0;right:0;height:1px}#scGrid i:nth-child(4){top:66.66%;left:0;right:0;height:1px}
+#scHint{top:calc(64px + env(safe-area-inset-top));padding:8px 16px;border-radius:20px;font-size:13.5px;font-weight:600;background:#000b;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);box-shadow:0 6px 20px #0006;transition:background .25s,color .25s,transform .25s}
+#scHint.ok{background:var(--sa);color:#1d1503}
+#scHint.go{background:var(--ok2);color:#062b16}
+#scHint.warn{background:#ff9f0ae6;color:#2a1700}
+#scCam .sbot{padding-top:30px}
+#scCam .modes{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;justify-content:center;margin:0 -22px 16px;padding:0 22px}
+#scCam .modes::-webkit-scrollbar{display:none}
+#scCam .modes button{flex:none;padding:7px 13px;border-radius:16px;font-size:13px;font-weight:700;letter-spacing:.02em;color:#ffffffa8;text-transform:uppercase;transition:color .2s,background .2s}
+#scCam .modes button.on{color:var(--sa);background:#ffffff14}
+#scShot{border:0;width:78px;height:78px}
+#scShot:after{inset:8px;background:#fff;box-shadow:0 0 0 1px #0002}
+#scShot.auto:after{background:#fff}
+#scShot .pr{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg)}
+#scShot .pr circle{fill:none;stroke:#fff;stroke-width:5}
+#scShot.auto .pr circle{stroke:#ffffff70}
+#scShot .ring{inset:0;border-width:5px}
+#scShot.arm .ring{border-top-color:var(--sa)}
+#scShot.go .ring{animation:none;border-color:var(--ok2)}
+#scShot.go:after{background:var(--ok2)}
+#scGal,#scPg{width:56px;height:56px;border-radius:16px;background:#0007;box-shadow:inset 0 0 0 1px #ffffff22;color:#fff}
+#scCrop .chint{text-align:center;color:#ffffff90;font-size:12.5px;padding:2px 0 8px}
+#scCropS path.dim{fill:#000a;fill-rule:evenodd}
+#scCropS polygon{fill:none;stroke:var(--sa);stroke-width:2.5}
+#scCropS circle.h{fill:#fff;stroke:var(--sa);stroke-width:3;filter:drop-shadow(0 1px 3px #000c)}
+#scCropS rect.m{fill:#fff;stroke:var(--sa);stroke-width:2.5;filter:drop-shadow(0 1px 3px #000c)}
+#scCropS .on{fill:var(--sa)}
+#scan .tools{gap:2px;padding-top:8px}
+#scan .tools button{min-width:0;flex:1;font-size:11px;font-weight:600;color:#d6d6dc;border-radius:12px;padding:6px 2px}
+#scan .tools button:active{background:#ffffff10;opacity:1}
+#scan .tools button b{font-size:21px;height:24px;display:grid;place-items:center}
+#scRev .stop h3{color:#fff}
+#scRev .sl .pgn{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:#000b;color:#fff;font-size:12px;font-weight:700;padding:3px 10px;border-radius:12px;pointer-events:none}
+#scRev .sl .fn{position:absolute;top:14px;left:50%;transform:translateX(-50%);background:#000b;color:var(--sa);font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:12px;pointer-events:none}
+#scRev .filt button i{border-radius:12px}
+#scRev .thumbs button{border-radius:8px}
+#scRev .thumbs button.on{box-shadow:0 0 0 2.5px var(--sa)}
+#scCard{position:absolute;left:50%;bottom:calc(150px + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:8px;z-index:3}
+#scCard span{padding:5px 12px;border-radius:14px;font-size:12px;font-weight:700;background:#0009;color:#ffffffa0;box-shadow:inset 0 0 0 1px #ffffff22}
+#scCard span.on{background:var(--sa);color:#1d1503}
+#scCard span.ok{background:#34d07a33;color:#6fe3a2}
 `;
 const html = `
 <div class="pane" id="scCam">
-  <div class="vw"><video id="scV" playsinline muted autoplay></video><canvas id="scO"></canvas><div id="scNoCam" class="hide"><div style="font-size:46px">📷</div><div id="scNoTxt">Caméra indisponible.</div><button class="gb p" id="scRetry">Réessayer</button></div><div id="scFlash"></div></div>
-  <div class="stop"><button class="rb" id="scX" aria-label="Fermer">✕</button><h3>Scanner</h3><button class="rb hide" id="scTorch" aria-label="Lampe">⚡</button></div>
+  <div class="vw"><video id="scV" playsinline muted autoplay></video><div id="scGrid" class="hide"><i></i><i></i><i></i><i></i></div><canvas id="scO"></canvas><div id="scNoCam" class="hide"><div style="font-size:46px">📷</div><div id="scNoTxt">Caméra indisponible.</div><button class="gb p" id="scRetry">Réessayer</button></div><div id="scFlash"></div></div>
+  <div class="stop"><button class="rb" id="scX" aria-label="Fermer">✕</button><div class="ttl"><h3>Scanner</h3><small id="scSub"></small></div><button class="rb pill" id="scAutoB" aria-label="Déclenchement automatique">AUTO</button><button class="rb hide" id="scTorch" aria-label="Lampe">⚡</button><button class="rb" id="scOpt" aria-label="Options">⋯</button></div>
   <div id="scHint">Placez le document dans l’écran</div>
+  <div id="scCard" class="hide"><span id="scCard1">① Recto</span><span id="scCard2">② Verso</span></div>
   <div class="sbot">
-    <div class="mode"><button data-a="1" class="on">Auto</button><button data-a="0">Manuel</button></div>
-    <div class="row"><button id="scGal" aria-label="Importer une photo">🖼</button><button id="scShot" class="auto" aria-label="Scanner"><span class="ring"></span></button><button id="scPg" aria-label="Voir les pages"><span style="opacity:.5;font-size:13px">0 page</span></button></div>
+    <div class="modes" id="scModes"><button data-m="doc">Document</button><button data-m="carte">Carte</button><button data-m="livre">Livre</button><button data-m="tableau">Tableau</button><button data-m="photo">Photo</button></div>
+    <div class="row"><button id="scGal" aria-label="Importer une photo"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg></button><button id="scShot" class="auto" aria-label="Scanner"><svg class="pr" viewBox="0 0 100 100"><circle cx="50" cy="50" r="46"/></svg><span class="ring"></span></button><button id="scPg" aria-label="Voir les pages"><span style="opacity:.5;font-size:13px">0 page</span></button></div>
   </div>
 </div>
 <div class="pane hide" id="scCrop">
   <div class="stop"><button class="gb" id="scCropNo">Annuler</button><h3>Ajuster les bords</h3><button class="gb p" id="scCropOk">OK</button></div>
   <div class="stage" id="scCropSt"><canvas id="scCropC"></canvas><svg id="scCropS"></svg><canvas id="scLoupe" width="220" height="220"></canvas></div>
-  <div class="tools"><button id="scCAuto"><b>✨</b>Bords auto</button><button id="scCFull"><b>⛶</b>Page entière</button><button id="scCRot"><b>↻</b>Pivoter</button></div>
+  <div class="chint">Glissez un coin ou le milieu d’un bord</div>
+  <div class="tools"><button id="scCAuto"><b>✨</b>Bords auto</button><button id="scCFull"><b>⛶</b>Page entière</button><button id="scCInit"><b>↺</b>Revenir</button><button id="scCRot"><b>↻</b>Pivoter</button></div>
 </div>
 <div class="pane hide" id="scRev">
   <div class="stop"><button class="gb" id="scRevBack">‹ Caméra</button><h3 id="scRevT">1 page</h3><button class="gb p" id="scSave">Enregistrer</button></div>
@@ -443,7 +708,7 @@ const html = `
   <div class="filt" id="scFilt"></div>
   <div id="scAdj"><label><b>Luminosité</b><input type="range" min="-50" max="50" value="0" data-k="b"><em>0</em></label><label><b>Contraste</b><input type="range" min="-50" max="50" value="0" data-k="c"><em>0</em></label><label><b>Netteté</b><input type="range" min="0" max="100" value="50" data-k="s"><em>50</em></label><div class="ar"><button id="scAdjAll">Appliquer à toutes les pages</button><button id="scAdj0">Réinitialiser</button></div></div>
   <div class="thumbs" id="scThumbs"></div>
-  <div class="tools"><button id="scTCrop"><b>⌗</b>Recadrer</button><button id="scTAdj"><b>🎚</b>Ajuster</button><button id="scTRot"><b>↻</b>Pivoter</button><button id="scTL"><b>‹</b>Avant</button><button id="scTR"><b>›</b>Après</button><button id="scTDel" class="dg"><b>🗑</b>Supprimer</button></div>
+  <div class="tools"><button id="scTCrop"><b>⌗</b>Recadrer</button><button id="scTAdj"><b>🎚</b>Ajuster</button><button id="scTRot"><b>↻</b>Pivoter</button><button id="scTRe"><b>⟲</b>Reprendre</button><button id="scTL"><b>‹</b>Avant</button><button id="scTR"><b>›</b>Après</button><button id="scTDel" class="dg"><b>🗑</b>Supprimer</button></div>
 </div>
 <div id="scBusy"><i></i><span id="scBusyT">Traitement…</span></div>
 <input type="file" id="scIn" accept="image/*" multiple hidden>`;
@@ -461,18 +726,35 @@ let QUAL = 'haute', PAGES = [], CUR = 0, FILT = 'auto', AUTO = true, stream = nu
 let lastQ = null, stable = 0, cool = 0, need = null, open = false, cropIdx = -1, cropQ = null, cropSrc = null, cropNew = false;
 const QUALS = { std: { cap: 2400, out: 2000, jq: .82 }, haute: { cap: 3400, out: 2800, jq: .9 }, max: { cap: 4400, out: 3800, jq: .94 } };
 const Q = () => QUALS[QUAL] || QUALS.haute;
-window.scanPrefsRelire = () => { try { const o = JSON.parse(localStorage.getItem('scanPrefs') || '{}'); FILT = o.f || 'auto'; AUTO = o.a !== false; QUAL = o.q || 'haute'; } catch (e) {} };
+// v2 : mode de prise de vue, grille, son, vérification des bords, format de page du PDF
+let MODE = 'doc', GRID = false, SOUND = true, VERIF = false, PSIZE = 'auto', CARD = null;
+const MODES = { doc: 'Document', carte: 'Carte recto verso', livre: 'Livre · 2 pages', tableau: 'Tableau blanc', photo: 'Photo, sans recadrage' };
+window.scanPrefsRelire = () => { try { const o = JSON.parse(localStorage.getItem('scanPrefs') || '{}'); FILT = o.f || 'auto'; AUTO = o.a !== false; QUAL = o.q || 'haute';
+  MODE = MODES[o.m] ? o.m : 'doc'; GRID = !!o.g; SOUND = o.s !== false; VERIF = !!o.v; PSIZE = ['auto', 'a4', 'lettre'].includes(o.p) ? o.p : 'auto'; } catch (e) {} };
 scanPrefsRelire();
-const savePrefs = () => { try { const o = JSON.parse(localStorage.getItem('scanPrefs') || '{}'); o.f = FILT; o.a = AUTO; localStorage.setItem('scanPrefs', JSON.stringify(o)); } catch (e) {} };
+const savePrefs = () => { try { const o = JSON.parse(localStorage.getItem('scanPrefs') || '{}'); Object.assign(o, { f: FILT, a: AUTO, q: QUAL, m: MODE, g: GRID, s: SOUND, v: VERIF, p: PSIZE }); localStorage.setItem('scanPrefs', JSON.stringify(o)); } catch (e) {} };
+let actx = null;
+const clic = () => {   // petit bruit d'obturateur (désactivable)
+  if (!SOUND) return;
+  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); const n = actx.sampleRate * .06, b = actx.createBuffer(1, n, actx.sampleRate), d = b.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 3) * (i < n * .3 ? 1 : .5);
+    const s = actx.createBufferSource(), g = actx.createGain(); g.gain.value = .35; s.buffer = b; s.connect(g); g.connect(actx.destination); s.start(); } catch (e) {}
+};
 const small = document.createElement('canvas'), sctx = small.getContext('2d', { willReadFrequently: true });
 
-function detectOn(src, sw, sh) {   // renvoie un quadrilatère en coordonnées de la source
-  const W = 240, H = Math.max(8, Math.round(sh * W / sw)); small.width = W; small.height = H;
+const mid = document.createElement('canvas'), mctx = mid.getContext('2d', { willReadFrequently: true });
+function detectOn(src, sw, sh, live) {   // renvoie un quadrilatère en coordonnées de la source
+  const W = 320, H = Math.max(8, Math.round(sh * W / sw)); small.width = W; small.height = H;
   sctx.drawImage(src, 0, 0, W, H);
-  const q = SC.detect(sctx.getImageData(0, 0, W, H).data, W, H);
+  let q = SC.detect2(sctx.getImageData(0, 0, W, H).data, W, H);
   if (!q) return null;
+  // affinage sur une image plus grande : les coins tombent exactement sur les bords de la feuille
+  const RW = Math.min(sw, live ? 720 : 1400), RH = Math.max(8, Math.round(sh * RW / sw)); mid.width = RW; mid.height = RH;
+  mctx.drawImage(src, 0, 0, RW, RH);
+  try { const g = SC.blur(SC.gray(mctx.getImageData(0, 0, RW, RH).data, RW, RH), RW, RH, 1); q = SC.refine(g, RW, RH, q.map(p => [p[0] * RW / W, p[1] * RH / H])); }
+  catch (e) { q = q.map(p => [p[0] * RW / W, p[1] * RH / H]); }
   const cx = q.reduce((a, p) => a + p[0], 0) / 4, cy = q.reduce((a, p) => a + p[1], 0) / 4;
-  return q.map(p => [(p[0] + (cx - p[0]) * .012) * sw / W, (p[1] + (cy - p[1]) * .012) * sh / H]);
+  return q.map(p => [(p[0] + (cx - p[0]) * .004) * sw / RW, (p[1] + (cy - p[1]) * .004) * sh / RH]);
 }
 const inset = (w, h, k = .04) => [[w * k, h * k], [w * (1 - k), h * k], [w * (1 - k), h * (1 - k)], [w * k, h * (1 - k)]];
 
@@ -498,7 +780,7 @@ function camStop() {
   if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; track = null; torch = false; E('scTorch').classList.remove('on');
   const V = E('scV'); V.srcObject = null; drawOverlay(null);
 }
-function hint(t, ok) { const h = E('scHint'); h.textContent = t; h.classList.toggle('ok', !!ok); }
+function hint(t, k) { const h = E('scHint'); if (h.textContent !== t) h.textContent = t; h.className = k === true ? 'ok' : (k || ''); }
 function mapV() {   // vidéo → écran (object-fit: cover)
   const V = E('scV'), cw = V.clientWidth, ch = V.clientHeight, vw = V.videoWidth, vh = V.videoHeight, s = Math.max(cw / vw, ch / vh);
   return { s, ox: (cw - vw * s) / 2, oy: (ch - vh * s) / 2, cw, ch };
@@ -509,27 +791,61 @@ function drawOverlay(q) {
   const c = O.getContext('2d'); c.setTransform(r, 0, 0, r, 0, 0); c.clearRect(0, 0, cw, ch);
   if (!q) return;
   const m = mapV(), P = q.map(p => [p[0] * m.s + m.ox, p[1] * m.s + m.oy]);
+  const col = stable >= 2 ? '#34d07a' : accent();
+  // assombrit tout ce qui n'est pas la feuille
+  c.beginPath(); c.rect(0, 0, cw, ch); P.slice().reverse().forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); c.closePath();
+  c.fillStyle = '#0000006b'; c.fill();
   c.beginPath(); P.forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); c.closePath();
-  c.fillStyle = stable > 2 ? '#d9b25a40' : '#d9b25a22'; c.fill();
-  c.lineWidth = 3; c.strokeStyle = '#f3dc9a'; c.shadowColor = '#000'; c.shadowBlur = 6; c.stroke(); c.shadowBlur = 0;
-  P.forEach(p => { c.beginPath(); c.arc(p[0], p[1], 7, 0, 7); c.fillStyle = '#f3dc9a'; c.fill(); });
+  c.fillStyle = col + '1f'; c.fill();
+  c.lineWidth = 2; c.strokeStyle = col + 'aa'; c.stroke();
+  // coins en équerre
+  c.lineWidth = 5; c.lineCap = 'round'; c.strokeStyle = col; c.shadowColor = '#0009'; c.shadowBlur = 6;
+  P.forEach((p, i) => { const a = P[(i + 3) % 4], b = P[(i + 1) % 4], L = 26;
+    const da = Math.hypot(a[0] - p[0], a[1] - p[1]) || 1, db = Math.hypot(b[0] - p[0], b[1] - p[1]) || 1, ka = Math.min(L, da / 3) / da, kb = Math.min(L, db / 3) / db;
+    c.beginPath(); c.moveTo(p[0] + (a[0] - p[0]) * ka, p[1] + (a[1] - p[1]) * ka); c.lineTo(p[0], p[1]); c.lineTo(p[0] + (b[0] - p[0]) * kb, p[1] + (b[1] - p[1]) * kb); c.stroke(); });
+  c.shadowBlur = 0;
 }
+let lum = 128, lumN = 0;
+const accent = () => { const v = getComputedStyle(E('scan')).getPropertyValue('--sa').trim(); return /^#[0-9a-f]{6}$/i.test(v) ? v : '#e5b400'; };
+function ringProgress(k) {   // anneau du déclencheur : se remplit pendant que le document est stable
+  const c = E('scShot').querySelector('.pr circle'), L = 289;
+  c.style.strokeDasharray = L; c.style.strokeDashoffset = k == null ? 0 : L * (1 - Math.max(0, Math.min(1, k)));
+  c.style.stroke = k == null ? '' : (k >= 1 ? '#34d07a' : accent());
+}
+let shooting = false;
 function liveDetect() {
-  const V = E('scV'); if (!open || !V.videoWidth || E('scCam').classList.contains('hide')) return;
-  let q = null; try { q = detectOn(V, V.videoWidth, V.videoHeight); } catch (e) {}
+  const V = E('scV'); if (!open || !V.videoWidth || E('scCam').classList.contains('hide') || shooting) return;
+  const vw = V.videoWidth, vh = V.videoHeight;
+  if (MODE === 'photo') {   // photo libre : pas de détection, toute l'image est gardée
+    drawOverlay(null); lastQ = null; stable = 0; ringProgress(null);
+    hint('Mode photo : touchez le bouton', true); return;
+  }
+  let q = null; try { q = detectOn(V, vw, vh, true); } catch (e) {}
+  // éclairage (image réduite déjà en mémoire)
+  if (++lumN % 4 === 1) { try { const d = sctx.getImageData(0, 0, small.width, small.height).data; let s = 0, n = 0; for (let i = 0; i < d.length; i += 64) { s += d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11; n++; } lum = s / n; } catch (e) {} }
   const now = Date.now();
-  if (q && lastQ) { const mv = Math.max(...q.map((p, i) => dist(p, lastQ[i]))) / V.videoWidth; stable = mv < .025 ? stable + 1 : 0; } else stable = 0;
+  if (q && lastQ) { const mv = Math.max(...q.map((p, i) => dist(p, lastQ[i]))) / vw; stable = mv < .025 ? stable + 1 : 0; } else stable = 0;
   // lissage pour un cadre qui ne tremble pas
   lastQ = q && lastQ ? q.map((p, i) => [lastQ[i][0] * .5 + p[0] * .5, lastQ[i][1] * .5 + p[1] * .5]) : q;
   drawOverlay(lastQ);
   // après un scan auto : attendre que la page change (ou que le document sorte du cadre) avant le suivant
-  if (need && (!q || Math.max(...q.map((p, i) => dist(p, need[i]))) / V.videoWidth > .12)) need = null;
-  const armed = AUTO && q && !need && stable >= 2 && now > cool;
-  E('scShot').classList.toggle('arm', !!armed);
-  if (need && AUTO) hint(PAGES.length + (PAGES.length > 1 ? ' pages' : ' page') + ' · placez la page suivante', true);
-  else if (!q) hint(AUTO ? 'Recherche du document…' : 'Placez le document dans l’écran', false);
-  else if (AUTO) hint(stable >= 2 ? 'Ne bougez plus…' : 'Document trouvé', true);
-  else hint('Touchez le bouton pour scanner', true);
+  if (need && (!q || Math.max(...q.map((p, i) => dist(p, need[i]))) / vw > .12)) need = null;
+  // conseils : trop loin, trop penché, trop sombre
+  const area = q ? SC.area(q) / (vw * vh) : 0, petit = q && area < (MODE === 'carte' ? .05 : .12);
+  const side = q ? [dist(q[0], q[1]), dist(q[1], q[2]), dist(q[2], q[3]), dist(q[3], q[0])] : null;
+  const penche = side && Math.min(side[0] / side[2], side[2] / side[0], side[1] / side[3], side[3] / side[1]) < .66;
+  const sombre = lum < 55;
+  const pre = MODE === 'carte' ? (CARD ? 'Verso · ' : 'Recto · ') : '';
+  const armed = AUTO && q && !need && !petit && stable >= 2 && now > cool;
+  ringProgress(armed ? (stable - 1) / 5 : null);
+  E('scShot').classList.toggle('go', !!armed && stable >= 6);
+  if (need && AUTO) hint(MODE === 'carte' && CARD ? 'Retournez la carte : verso' : (PAGES.length + (PAGES.length > 1 ? ' pages' : ' page') + ' · placez la page suivante'), true);
+  else if (sombre && !torch) hint(E('scTorch').classList.contains('hide') ? 'Trop sombre : ajoutez de la lumière' : 'Trop sombre : allumez la lampe ⚡', 'warn');
+  else if (!q) hint(pre + (AUTO ? 'Recherche du document…' : 'Placez le document dans l’écran'), false);
+  else if (petit) hint(pre + 'Rapprochez-vous', 'warn');
+  else if (penche) hint(pre + 'Tenez le téléphone bien au-dessus', 'warn');
+  else if (AUTO) hint(pre + (stable >= 2 ? 'Ne bougez plus…' : 'Document trouvé'), stable >= 2 ? 'go' : true);
+  else hint(pre + 'Touchez le bouton pour scanner', true);
   if (armed && stable >= 6) { cool = now + 1500; stable = 0; need = q; capture(); }
 }
 function toCanvas(src, w, h, cap) {
@@ -537,9 +853,13 @@ function toCanvas(src, w, h, cap) {
   c.width = Math.round(w * k); c.height = Math.round(h * k); const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0, c.width, c.height); return c;
 }
 async function capture() {
-  const V = E('scV'); if (!V.videoWidth) return;
+  const V = E('scV'); if (!V.videoWidth || shooting) return;
+  shooting = true;
+  try { await capture1(V); } finally { shooting = false; ringProgress(null); E('scShot').classList.remove('go'); }
+}
+async function capture1(V) {
   const f = E('scFlash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
-  navigator.vibrate && navigator.vibrate(30);
+  navigator.vibrate && navigator.vibrate(30); clic();
   let src = null;
   // photo pleine résolution du capteur quand le téléphone le permet (bien plus nette qu'une image de la vidéo)
   if (QUAL !== 'std' && track && window.ImageCapture) {
@@ -551,15 +871,67 @@ async function capture() {
     } catch (e) {}
   }
   if (!src) src = toCanvas(V, V.videoWidth, V.videoHeight);
+  if (MODE === 'photo') { await addPage(src, [[0, 0], [src.width, 0], [src.width, src.height], [0, src.height]], false, { f: 'photo' }); hint('Photo ajoutée ✓', 'go'); return; }
   let q = null; try { q = detectOn(src, src.width, src.height); } catch (e) {}
-  if (!q && lastQ && Math.abs(src.width / src.height - V.videoWidth / V.videoHeight) < .03) { const k = src.width / V.videoWidth; q = lastQ.map(p => [p[0] * k, p[1] * k]); }
-  await addPage(src, q, !AUTO && !q);
+  // photo et vidéo n'ont pas toujours le même format (4:3 contre 16:9 sur Samsung) : la vidéo est le centre
+  // de la photo, à la même échelle sur le grand côté. On y reporte le cadre vu en direct.
+  if (!q && lastQ) {
+    const vw = V.videoWidth, vh = V.videoHeight, k = Math.max(src.width, src.height) / Math.max(vw, vh), ox = (src.width - vw * k) / 2, oy = (src.height - vh * k) / 2;
+    q = lastQ.map(p => [Math.max(0, Math.min(src.width, p[0] * k + ox)), Math.max(0, Math.min(src.height, p[1] * k + oy))]);
+    if (!SC.convex(SC.order(q) || [[0, 0], [0, 0], [0, 0], [0, 0]])) q = null;
+  }
+  if (MODE === 'carte') return carteFace(src, q);
+  if (MODE === 'livre' && q) {   // livre ouvert : on coupe au milieu → page de gauche puis page de droite
+    const m1 = [(q[0][0] + q[1][0]) / 2, (q[0][1] + q[1][1]) / 2], m2 = [(q[3][0] + q[2][0]) / 2, (q[3][1] + q[2][1]) / 2];
+    await addPage(src, [q[0], m1, m2, q[3]], false, { hold: 1 }); const first = CUR; await addPage(src, [m1, q[1], q[2], m2], VERIF, { after: 1 });
+    if (VERIF && E('scCrop').classList.contains('hide')) openCrop(first, true); return;
+  }
+  // aucun bord trouvé (ou vérification demandée) : on ouvre le recadrage au lieu de garder un cadre au hasard
+  await addPage(src, q, !q || VERIF, MODE === 'tableau' ? { f: 'tableau' } : null);
 }
-async function addPage(src, q, wantCrop) {
-  const p = { src, q: q || inset(src.width, src.height), rot: 0, f: FILT, adj: {}, out: null, url: null, auto: !!q };
-  PAGES.push(p); CUR = PAGES.length - 1;
+let RETAKE = null, RETOOK = false;   // « Reprendre » : la nouvelle photo remplace la page choisie
+async function addPage(src, q, wantCrop, extra) {
+  extra = extra || {}; const { hold, after, ...more } = extra;
+  const p = { src, q: q || inset(src.width, src.height), rot: 0, f: FILT, adj: {}, out: null, url: null, auto: !!q, ...more };
+  if (RETAKE != null && PAGES[RETAKE]) { const o = PAGES[RETAKE]; if (o.url) URL.revokeObjectURL(o.url); PAGES[RETAKE] = p; CUR = RETAKE; RETAKE = null; RETOOK = true; }
+  else if (after && PAGES.length) { PAGES.splice(CUR + 1, 0, p); CUR = CUR + 1; }
+  else { PAGES.push(p); CUR = PAGES.length - 1; }
   await renderPage(p); drawPg();
+  if (hold) return;
+  if (RETOOK) { RETOOK = false; if (wantCrop) { revFrom = true; openCrop(CUR, true); } else openReview(CUR); return; }
   if (wantCrop) openCrop(CUR, true);
+}
+/* ---------- Carte (identité, banque, visite) : recto + verso sur une seule page A4 ---------- */
+const CARTE_R = 85.6 / 53.98;
+function carteDraw() {
+  E('scCard').classList.toggle('hide', MODE !== 'carte');
+  E('scCard1').className = CARD ? 'ok' : 'on'; E('scCard2').className = CARD ? 'on' : '';
+  E('scCard1').textContent = CARD ? '✓ Recto' : '① Recto';
+}
+function faceCanvas(src, q) {   // une face redressée, au format carte
+  const [W0, H0] = SC.outSize(q, 1400); let W = W0, H = H0; if (W < H) [W, H] = [H, W];
+  H = Math.round(W / CARTE_R);
+  const qq = W0 < H0 ? [q[3], q[0], q[1], q[2]] : q;   // carte tenue en hauteur : on la couche
+  const sd = src.getContext('2d').getImageData(0, 0, src.width, src.height).data, px = SC.warp(sd, src.width, src.height, qq, W, H);
+  const c = document.createElement('canvas'); c.width = W; c.height = H; c.getContext('2d').putImageData(new ImageData(px, W, H), 0, 0); return c;
+}
+async function carteFace(src, q) {
+  if (!q) q = inset(src.width, src.height, .08);
+  if (!CARD) { CARD = faceCanvas(src, q); carteDraw(); hint('Retournez la carte : verso', true); toast('Recto ✓ — scannez le verso', 1800); return; }
+  const a = CARD, b = faceCanvas(src, q); CARD = null; carteDraw();
+  const PW = 2480, PH = 3508, cw = Math.round(PW * .62), chh = Math.round(cw / CARTE_R), c = document.createElement('canvas'); c.width = PW; c.height = PH;
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, PW, PH);
+  const x0 = (PW - cw) / 2, gap = PH * .06, y0 = (PH - chh * 2 - gap) / 2;
+  g.imageSmoothingQuality = 'high';
+  // coins arrondis comme une vraie carte (rayon 3,18 mm sur 85,6 mm), ombre douce et fin liseré
+  const R = cw * .037, arrondi = (x, y) => { g.beginPath(); if (g.roundRect) g.roundRect(x, y, cw, chh, R); else { g.moveTo(x + R, y); g.arcTo(x + cw, y, x + cw, y + chh, R); g.arcTo(x + cw, y + chh, x, y + chh, R); g.arcTo(x, y + chh, x, y, R); g.arcTo(x, y, x + cw, y, R); g.closePath(); } };
+  [[a, y0], [b, y0 + chh + gap]].forEach(([img, y]) => {
+    g.save(); arrondi(x0, y); g.shadowColor = '#00000038'; g.shadowBlur = cw * .025; g.shadowOffsetY = cw * .008; g.fillStyle = '#fff'; g.fill(); g.restore();
+    g.save(); arrondi(x0, y); g.clip(); g.drawImage(img, x0, y, cw, chh); g.restore();
+    g.save(); arrondi(x0, y); g.lineWidth = Math.max(2, cw * .0025); g.strokeStyle = '#00000026'; g.stroke(); g.restore();
+  });
+  await addPage(c, [[0, 0], [PW, 0], [PW, PH], [0, PH]], false, { carte: 1 });
+  hint('Carte ajoutée ✓', 'go');
 }
 function drawPg() {
   const b = E('scPg'), n = PAGES.length, last = PAGES[n - 1];
@@ -586,7 +958,7 @@ async function renderPage(p) {
 /* ---------- Recadrage (4 coins + loupe) ---------- */
 let cv = null;   // vue : échelle et décalage de l'image dans la zone
 function openCrop(i, isNew) {
-  cropIdx = i; cropNew = !!isNew; const p = PAGES[i]; cropSrc = p.src; cropQ = p.q.map(a => a.slice());
+  cropIdx = i; cropNew = !!isNew; const p = PAGES[i]; cropSrc = p.src; cropQ = p.q.map(a => a.slice()); cropInit = p.q.map(a => a.slice());
   clearInterval(loop); loop = null; pane('scCrop');
   requestAnimationFrame(layoutCrop);
 }
@@ -599,32 +971,48 @@ function layoutCrop() {
   drawCrop();
 }
 function drawCrop() {
-  const P = cropQ.map(p => [p[0] * cv.k + cv.ox, p[1] * cv.k + cv.oy]);
-  E('scCropS').innerHTML = `<polygon points="${P.map(p => p.join(',')).join(' ')}"/>` + P.map((p, i) => `<circle class="h" cx="${p[0]}" cy="${p[1]}" r="13"/><circle class="t" data-i="${i}" cx="${p[0]}" cy="${p[1]}" r="30"/>`).join('');
+  const P = cropQ.map(p => [p[0] * cv.k + cv.ox, p[1] * cv.k + cv.oy]), stg = E('scCropSt'), W = stg.clientWidth, H = stg.clientHeight;
+  const M = P.map((p, i) => { const q = P[(i + 1) % 4]; return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, Math.atan2(q[1] - p[1], q[0] - p[0]) * 180 / Math.PI]; });
+  E('scCropS').innerHTML = `<path class="dim" d="M0 0H${W}V${H}H0Z M${P.map(p => p.join(' ')).join(' L')} Z"/><polygon points="${P.map(p => p.join(',')).join(' ')}"/>` +
+    M.map((m, i) => `<rect class="m${cropDrag === 4 + i ? ' on' : ''}" x="${m[0] - 14}" y="${m[1] - 4}" width="28" height="8" rx="4" transform="rotate(${m[2]} ${m[0]} ${m[1]})"/>`).join('') +
+    P.map((p, i) => `<circle class="h${cropDrag === i ? ' on' : ''}" cx="${p[0]}" cy="${p[1]}" r="${cropDrag === i ? 15 : 12}"/>`).join('');
 }
+let cropDrag = -1, cropInit = null;
 (() => {
-  const stg = E('scCropSt'), L = E('scLoupe'); let drag = -1, off = [0, 0];
-  stg.addEventListener('pointerdown', e => {
-    if (!cv) return; const b = stg.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
-    let bi = -1, bd = 46; cropQ.forEach((p, i) => { const d = Math.hypot(p[0] * cv.k + cv.ox - x, p[1] * cv.k + cv.oy - y); if (d < bd) { bd = d; bi = i; } });
-    if (bi < 0) return; drag = bi; off = [cropQ[bi][0] * cv.k + cv.ox - x, cropQ[bi][1] * cv.k + cv.oy - y];
-    stg.setPointerCapture(e.pointerId); move(e);
-  });
-  const move = e => {
-    if (drag < 0) return; const b = stg.getBoundingClientRect(), s = cropSrc;
-    const x = Math.max(0, Math.min(s.width, (e.clientX - b.left + off[0] - cv.ox) / cv.k)), y = Math.max(0, Math.min(s.height, (e.clientY - b.top + off[1] - cv.oy) / cv.k));
-    cropQ[drag] = [x, y]; drawCrop();
-    // loupe : affichée à l'opposé du doigt
-    const sx = x * cv.k + cv.ox, sy = y * cv.k + cv.oy; L.style.display = 'block';
+  const stg = E('scCropSt'), L = E('scLoupe'); let off = [0, 0], start = null;
+  const loupe = (x, y) => {   // loupe : affichée à l'opposé du doigt
+    const s = cropSrc, sx = x * cv.k + cv.ox; L.style.display = 'block';
     L.style.left = (sx < stg.clientWidth / 2 ? stg.clientWidth - 126 : 16) + 'px'; L.style.top = '16px';
     const c = L.getContext('2d'), R = 110 / (cv.k * 2.5); c.fillStyle = '#000'; c.fillRect(0, 0, 220, 220);
     c.drawImage(s, x - R / 2, y - R / 2, R, R, 0, 0, 220, 220);
-    c.strokeStyle = '#f3dc9a'; c.lineWidth = 2; c.beginPath(); c.moveTo(110, 90); c.lineTo(110, 130); c.moveTo(90, 110); c.lineTo(130, 110); c.stroke();
+    c.strokeStyle = accent(); c.lineWidth = 2; c.beginPath(); c.moveTo(110, 88); c.lineTo(110, 132); c.moveTo(88, 110); c.lineTo(132, 110); c.stroke();
+  };
+  stg.addEventListener('pointerdown', e => {
+    if (!cv) return; const b = stg.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+    const P = cropQ.map(p => [p[0] * cv.k + cv.ox, p[1] * cv.k + cv.oy]);
+    let bi = -1, bd = 44; P.forEach((p, i) => { const d = Math.hypot(p[0] - x, p[1] - y); if (d < bd) { bd = d; bi = i; } });
+    if (bi < 0) { bd = 34; P.forEach((p, i) => { const q = P[(i + 1) % 4], d = Math.hypot((p[0] + q[0]) / 2 - x, (p[1] + q[1]) / 2 - y); if (d < bd) { bd = d; bi = 4 + i; } }); }
+    if (bi < 0) return; cropDrag = bi;
+    if (bi < 4) off = [P[bi][0] - x, P[bi][1] - y];
+    else start = { x, y, a: cropQ[bi - 4].slice(), b: cropQ[(bi - 3) % 4].slice() };
+    navigator.vibrate && navigator.vibrate(8);
+    stg.setPointerCapture(e.pointerId); move(e);
+  });
+  const clamp = (x, y) => [Math.max(0, Math.min(cropSrc.width, x)), Math.max(0, Math.min(cropSrc.height, y))];
+  const move = e => {
+    if (cropDrag < 0) return; const b = stg.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+    if (cropDrag < 4) { const p = clamp((x + off[0] - cv.ox) / cv.k, (y + off[1] - cv.oy) / cv.k); cropQ[cropDrag] = p; drawCrop(); loupe(p[0], p[1]); return; }
+    // milieu d'un bord : tout le côté se déplace, perpendiculairement à lui-même
+    const i = cropDrag - 4, j = (i + 1) % 4, A = start.a, B = start.b, L2 = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1, nx = -(B[1] - A[1]) / L2, ny = (B[0] - A[0]) / L2;
+    const d = ((x - start.x) * nx + (y - start.y) * ny) / cv.k;
+    cropQ[i] = clamp(A[0] + nx * d, A[1] + ny * d); cropQ[j] = clamp(B[0] + nx * d, B[1] + ny * d); drawCrop();
+    loupe((cropQ[i][0] + cropQ[j][0]) / 2, (cropQ[i][1] + cropQ[j][1]) / 2);
   };
   stg.addEventListener('pointermove', move);
-  const up = () => { drag = -1; L.style.display = 'none'; };
+  const up = () => { cropDrag = -1; L.style.display = 'none'; if (cv) drawCrop(); };
   stg.addEventListener('pointerup', up); stg.addEventListener('pointercancel', up);
 })();
+E('scCInit').onclick = () => { if (cropInit) { cropQ = cropInit.map(a => a.slice()); drawCrop(); } };
 E('scCAuto').onclick = () => { const q = detectOn(cropSrc, cropSrc.width, cropSrc.height); if (q) { cropQ = q; drawCrop(); } else toast('Bords introuvables : placez les coins à la main', 2600); };
 E('scCFull').onclick = () => { const s = cropSrc; cropQ = [[0, 0], [s.width, 0], [s.width, s.height], [0, s.height]]; drawCrop(); };
 E('scCRot').onclick = () => { const p = PAGES[cropIdx]; p.rot = (p.rot + 1) & 3; toast(['Orientation d’origine', 'Pivoté de 90°', 'Pivoté de 180°', 'Pivoté de 270°'][p.rot], 1200); };
@@ -643,6 +1031,7 @@ function backFromCrop() {
 /* ---------- Révision des pages ---------- */
 let revFrom = false;
 function openReview(i = PAGES.length - 1) {
+  RETAKE = null;
   if (!PAGES.length) return toast('Aucune page scannée', 1600);
   revFrom = true; clearInterval(loop); loop = null; pane('scRev'); CUR = Math.max(0, Math.min(PAGES.length - 1, i));
   drawRev(true);
@@ -650,12 +1039,13 @@ function openReview(i = PAGES.length - 1) {
 function drawRev(jump) {
   E('scRevT').textContent = PAGES.length + (PAGES.length > 1 ? ' pages' : ' page');
   const s = E('scStrip');
-  s.innerHTML = PAGES.map((p, i) => `<div class="sl" data-i="${i}"><img src="${p.url}" alt="Page ${i + 1}"></div>`).join('');
+  const FN = Object.fromEntries(SC.FILTRES);
+  s.innerHTML = PAGES.map((p, i) => `<div class="sl" data-i="${i}"><img src="${p.url}" alt="Page ${i + 1}"><span class="fn">${FN[p.f] || ''}</span>${PAGES.length > 1 ? `<span class="pgn">${i + 1} / ${PAGES.length}</span>` : ''}</div>`).join('');
   E('scThumbs').innerHTML = PAGES.map((p, i) => `<button data-i="${i}" class="${i === CUR ? 'on' : ''}"><img src="${p.url}" alt=""><i>${i + 1}</i></button>`).join('') + '<button class="add" id="scAdd" aria-label="Ajouter une page">＋</button>';
   E('scThumbs').querySelectorAll('button[data-i]').forEach(b => b.onclick = () => goPage(+b.dataset.i));
   E('scAdd').onclick = () => { revFrom = false; pane('scCam'); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 200); } else camStart(); };
   drawFilt();
-  E('scTL').style.visibility = E('scTR').style.visibility = PAGES.length > 1 ? 'visible' : 'hidden';
+  E('scTL').style.display = E('scTR').style.display = PAGES.length > 1 ? '' : 'none';
   if (jump) requestAnimationFrame(() => { s.scrollLeft = CUR * s.clientWidth; });
 }
 function miniDe(p) {   // aperçus de chaque filtre pour la page courante
@@ -697,6 +1087,7 @@ E('scAdj0').onclick = async () => { const p = PAGES[CUR]; if (!p) return; p.adj 
 E('scAdjAll').onclick = async () => { const p = PAGES[CUR]; if (!p) return; busy('Réglages appliqués à toutes les pages…'); await tick(); try { for (const x of PAGES) if (x !== p) { x.adj = { ...(p.adj || {}) }; await renderPage(x); }  drawRev(true); } finally { busy(); } };
 E('scTRot').onclick = async () => { const p = PAGES[CUR]; if (!p) return; p.rot = (p.rot + 1) & 3; busy('Rotation…'); try { await redo(p); } finally { busy(); } };
 E('scTCrop').onclick = () => PAGES[CUR] && openCrop(CUR);
+E('scTRe').onclick = () => { if (!PAGES[CUR]) return; RETAKE = CUR; revFrom = false; need = null; pane('scCam'); hint(`Reprendre la page ${CUR + 1}`, true); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 200); } else camStart(); };
 const swap = (a, b) => { [PAGES[a], PAGES[b]] = [PAGES[b], PAGES[a]]; CUR = b; drawRev(true); };
 E('scTL').onclick = () => CUR > 0 && swap(CUR, CUR - 1);
 E('scTR').onclick = () => CUR < PAGES.length - 1 && swap(CUR, CUR + 1);
@@ -728,7 +1119,7 @@ E('scSave').onclick = async () => {
     const now = Date.now();
     if (fmt === 'pdf') {
       const pg = []; for (const p of PAGES) pg.push({ jpg: await jpg(p.out), w: p.out.width, h: p.out.height });
-      const bytes = SC.pdf(pg), id = newId();
+      const bytes = SC.pdf(pg, PSIZE), id = newId();
       const meta = { name: /\.pdf$/i.test(name) ? name : name + '.pdf', type: 'application/pdf', size: bytes.length, kind: 'doc', thumb: thumbOf(PAGES[0].out), scan: PAGES.length, added: now, taken: now, album: ALBUM || '' };
       await storeItem(id, bytes.buffer, meta); ITEMS.push({ id, ...meta });
     } else {
@@ -745,7 +1136,7 @@ E('scSave').onclick = async () => {
 };
 
 /* ---------- Bloc-notes : scan comme Adobe Scan (PDF à partager, texte reconnu, note) ---------- */
-const pdfOf = async () => { const pg = []; for (const p of PAGES) pg.push({ jpg: await jpg(p.out), w: p.out.width, h: p.out.height }); return SC.pdf(pg); };
+const pdfOf = async () => { const pg = []; for (const p of PAGES) pg.push({ jpg: await jpg(p.out), w: p.out.width, h: p.out.height }); return SC.pdf(pg, PSIZE); };
 async function partager(bytes, name, type) {
   const f = new File([bytes], name, { type });
   try { if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: name }); return true; } } catch (e) { if (e.name === 'AbortError') return true; }
@@ -765,17 +1156,45 @@ async function lireTexte(force, seule) {
 // nom du scan : titre lu dans le document (réglage « Automatique »), sinon préfixe + date
 const nomAuto = () => !window.nPrefs || window.nPrefs().nomAuto !== false;
 const prefixe = () => (window.nPrefs && window.nPrefs().nomScan) || 'Scan';
+// sans texte lisible : le genre de scan + la date en toutes lettres (« Carte du 26 novembre, 19h35 »)
+const genreScan = () => PAGES.some(p => p.carte) ? 'carte' : '';
+function nomSecours() {
+  const d = new Date(), g = PAGES.some(p => p.carte) ? 'Carte' : PAGES.length && PAGES.every(p => p.f === 'tableau') ? 'Tableau blanc' : PAGES.length && PAGES.every(p => p.f === 'photo') ? 'Photo' : 'Document';
+  return `${g} du ${d.getDate()} ${SC.MOISN[d.getMonth()]}, ${d.getHours()}h${String(d.getMinutes()).padStart(2, '0')}`;
+}
 async function titreDoc() {
   let ti = '';
-  if (nomAuto()) { try { ti = SC.titre(await lireTexte(true, true)); } catch (e) { console.warn(e); } }
-  return ti || prefixe() + ' ' + stamp();
+  if (nomAuto()) { try { ti = SC.titre(await lireTexte(true, true), genreScan()); } catch (e) { console.warn(e); } return ti || nomSecours(); }
+  return prefixe() + ' ' + stamp();
 }
 window.scanTitre = SC.titre;
 window.scanPartager = partager;
 const pageMini = c => { const W = 132, H = 168, m = document.createElement('canvas'); m.width = W; m.height = H; const g = m.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); const k = W / c.width; g.drawImage(c, 0, 0, W, c.height * k); return m.toDataURL('image/jpeg', .8); };   // haut de la 1re page, comme une vignette de document
+// documents d'identité, de banque, de santé… : jamais en clair
+const SENSIBLE = /Carte d’identité|Passeport|Permis de conduire|Titre de séjour|Carte grise|Carte bancaire|Carte de mutuelle|Fiche de paie|Relevé bancaire|Impôts?|SPF Finances|précompte|Certificat médical|Ordonnance|Contrat|Bail|Attestation|Assurance/i;
 async function saveNote() {
   if (!PAGES.length) return;
   const n = PAGES.length, pl = n > 1 ? 's' : '';
+  let sens = '';
+  try { const ti = SC.titre(await lireTexte(true, true), genreScan()); if (SENSIBLE.test(ti)) sens = ti; } catch (e) {} busy();
+  if (sens) {
+    const c = await sheet('🔒 Document sensible : ' + sens, [
+      { v: 'coffre', ico: '🔐', cls: 'g', label: 'Le cacher dans le coffre (conseillé)', sub: 'Chiffré et protégé par votre code. Il apparaîtra à la prochaine ouverture du coffre.' },
+      { v: 'garder', ico: '📝', cls: 'gr', label: 'Le garder dans le bloc-notes', sub: 'Sans chiffrement. Aucune copie automatique sur le téléphone ni sur Drive.' }
+    ]);
+    if (!c) return;
+    if (c === 'coffre') {
+      if (!window.coffreDepot) return toast('Indisponible', 2000);
+      busy('Chiffrement…'); await tick();
+      try {
+        const bytes = await pdfOf(), ok = await window.coffreDepot(bytes, { name: sens.replace(/[\\/:*?"<>|]/g, '-') + '.pdf', type: 'application/pdf', thumb: thumbOf(PAGES[0].out), scan: n, kind: 'doc' });
+        busy();
+        if (!ok) return toast('Ouvrez le coffre une première fois, puis recommencez', 3500);
+        scanClose(true); toast('Caché dans le coffre 🔐 — visible à sa prochaine ouverture', 3500);
+      } catch (e) { console.warn(e); busy(); toast('Impossible de chiffrer le document', 3000); }
+      return;
+    }
+  }
   const v = await sheet('Que faire du scan ?', [
     { v: 'note', ico: '📝', cls: 'y', label: curNote ? 'Ajouter à cette note' : 'Créer une note', sub: 'PDF joint + texte reconnu, modifiable' },
     { v: 'pdf', ico: '📕', cls: 'r', label: 'Partager en PDF', sub: n > 1 ? `Un seul fichier de ${n} pages` : 'WhatsApp, e-mail, Drive…' },
@@ -792,7 +1211,7 @@ async function saveNote() {
     }
     if (v === 'jpg') {
       busy('Préparation…'); await tick();
-      const files = []; for (let i = 0; i < n; i++) files.push(new File([await jpg(PAGES[i].out)], `${(PAGES[0].txt && SC.titre(PAGES[0].txt)) || prefixe() + ' ' + stamp()}${n > 1 ? ` (${i + 1})` : ''}.jpg`, { type: 'image/jpeg' }));
+      const files = []; for (let i = 0; i < n; i++) files.push(new File([await jpg(PAGES[i].out)], `${((PAGES[0].txt && nomAuto() && SC.titre(PAGES[0].txt, genreScan())) || (nomAuto() ? nomSecours() : prefixe() + ' ' + stamp())).replace(/[\\/:*?"<>|]/g, '-')}${n > 1 ? ` (${i + 1})` : ''}.jpg`, { type: 'image/jpeg' }));
       busy();
       try { if (navigator.canShare && navigator.canShare({ files })) { await navigator.share({ files }); return; } } catch (e) { if (e.name === 'AbortError') return; }
       for (const f of files) await partager(f, f.name, f.type); return;
@@ -809,10 +1228,11 @@ async function saveNote() {
     const drive = window.scanDrivePret ? window.scanDrivePret() : null;   // connexion Google demandée tout de suite (le toucher le permet)
     let texte = ''; try { texte = await lireTexte(); } catch (e) { console.warn(e); }
     let doc = '';   // titre du document lu dans le texte
-    if (nomAuto()) { try { doc = SC.titre(texte || await lireTexte(true, true)); } catch (e) {} }
-    if (name === null) name = curNote ? (curNote.title || doc || prefixe()) : (doc || prefixe() + ' ' + stamp());
-    name = (name || '').trim() || prefixe() + ' ' + stamp();
-    const pdfNom = curNote ? (doc || name + ' ' + stamp()) : name;
+    if (nomAuto()) { try { doc = SC.titre(texte || await lireTexte(true, true), genreScan()); } catch (e) {} }
+    const secours = nomAuto() ? nomSecours() : prefixe() + ' ' + stamp();
+    if (name === null) name = curNote ? (curNote.title || doc || secours) : (doc || secours);
+    name = (name || '').trim() || secours;
+    const pdfNom = curNote ? (doc || secours) : name;
     busy('Création du PDF…'); await tick();
     const bytes = await pdfOf(), id = 'ns' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
     busy('Enregistrement…'); await tick();
@@ -825,7 +1245,8 @@ async function saveNote() {
     note.upd = Date.now(); await nSave();
     const nn = note; scanClose(true); busy(); noteEdit(nn);
     toast(`« ${pj.name.replace(/\.pdf$/, '')} » ajouté${texte ? ' avec son texte' : ''} ✓`, 3000);
-    if (window.scanExporter) window.scanExporter(bytes, pj, nn, drive);   // téléphone (PDF) + Google Drive, en arrière-plan
+    if (sens) toast('Document sensible : gardé ici seulement, pas copié sur le téléphone ni sur Drive', 3500);
+    else if (window.scanExporter) window.scanExporter(bytes, pj, nn, drive);   // téléphone (PDF) + Google Drive, en arrière-plan
   } catch (e) { console.warn(e); busy(); toast('Impossible : mémoire pleine ?', 3000); }
 }
 
@@ -855,8 +1276,37 @@ E('scShot').onclick = () => { if (E('scV').videoWidth) { cool = Date.now() + 150
 E('scPg').onclick = () => openReview();
 E('scRetry').onclick = camStart;
 E('scTorch').onclick = async () => { if (!track) return; torch = !torch; try { await track.applyConstraints({ advanced: [{ torch }] }); E('scTorch').classList.toggle('on', torch); } catch (e) { torch = false; } };
-E('scCam').querySelectorAll('.mode button').forEach(b => b.onclick = () => { AUTO = b.dataset.a === '1'; savePrefs(); drawMode(); });
-function drawMode() { E('scCam').querySelectorAll('.mode button').forEach(b => b.classList.toggle('on', (b.dataset.a === '1') === AUTO)); E('scShot').classList.toggle('auto', AUTO); }
+E('scAutoB').onclick = () => { AUTO = !AUTO; savePrefs(); drawMode(); toast(AUTO ? 'Déclenchement automatique' : 'Déclenchement manuel', 1300); };
+E('scModes').querySelectorAll('button').forEach(b => b.onclick = () => {
+  if (MODE === b.dataset.m) return; MODE = b.dataset.m; CARD = null; stable = 0; lastQ = null; need = null; savePrefs(); drawMode();
+  b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  toast({ doc: 'Document : bords trouvés tout seuls', carte: 'Carte : recto puis verso, sur une seule page', livre: 'Livre : 2 pages ouvertes → 2 pages', tableau: 'Tableau blanc : reflets effacés', photo: 'Photo : image entière, sans recadrage' }[MODE], 1800);
+});
+function drawMode() {
+  E('scAutoB').classList.toggle('on', AUTO); E('scAutoB').classList.toggle('hide', MODE === 'photo'); E('scShot').classList.toggle('auto', AUTO && MODE !== 'photo');
+  E('scModes').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.m === MODE));
+  E('scGrid').classList.toggle('hide', !GRID);
+  E('scSub').textContent = MODES[MODE] + ' · ' + (DEST === 'note' ? 'Bloc-notes' : 'Coffre 🔐');
+  carteDraw();
+}
+// options rapides, sans quitter la caméra
+E('scOpt').onclick = async () => {
+  const ck = b => b ? '  ✓' : '', FN = Object.fromEntries(SC.FILTRES);
+  const v = await sheet('Options du scanner', [
+    { v: 'q', ico: '💎', cls: 'p', label: 'Qualité : ' + { std: 'Standard', haute: 'Haute', max: 'Maximale' }[QUAL], sub: 'Standard → Haute → Maximale' },
+    { v: 'f', ico: '🎨', cls: 'o', label: 'Filtre de départ : ' + (FN[FILT] || 'Auto couleur'), sub: 'Appliqué à chaque nouvelle page' },
+    { v: 'p', ico: '📐', cls: 'b', label: 'Format du PDF : ' + { auto: 'Taille de la page', a4: 'A4', lettre: 'Lettre US' }[PSIZE], sub: 'Taille de la page → A4 → Lettre' },
+    { v: 'v', ico: '🔍', cls: 'g', label: 'Vérifier les bords après chaque photo' + ck(VERIF), sub: 'Ouvre l’écran des coins à chaque scan' },
+    { v: 'g', ico: '▦', cls: 'gr', label: 'Grille d’aide' + ck(GRID), sub: 'Pour bien aligner le document' },
+    { v: 's', ico: '🔊', cls: 'y', label: 'Son de l’obturateur' + ck(SOUND), sub: 'Petit clic à chaque photo' }
+  ]);
+  if (!v) return;
+  if (v === 'q') QUAL = { std: 'haute', haute: 'max', max: 'std' }[QUAL];
+  if (v === 'f') { const ks = SC.FILTRES.map(x => x[0]); FILT = ks[(ks.indexOf(FILT) + 1) % ks.length]; }
+  if (v === 'p') PSIZE = { auto: 'a4', a4: 'lettre', lettre: 'auto' }[PSIZE];
+  if (v === 'v') VERIF = !VERIF; if (v === 'g') GRID = !GRID; if (v === 's') { SOUND = !SOUND; clic(); }
+  savePrefs(); drawMode(); E('scOpt').onclick();   // la liste se rouvre pour enchaîner les réglages
+};
 E('scX').onclick = async () => {
   if (PAGES.length && !(await ask({ title: 'Abandonner le scan ?', text: `${PAGES.length} page${PAGES.length > 1 ? 's' : ''} non enregistrée${PAGES.length > 1 ? 's' : ''} seront perdues.`, ok: 'Abandonner', danger: true }))) return;
   scanClose();
@@ -865,7 +1315,7 @@ E('scX').onclick = async () => {
 /* ---------- Ouverture / fermeture ---------- */
 window.scanOpen = (dest) => {
   DEST = dest === 'note' ? 'note' : 'vault';
-  if (DEST === 'vault' && !KEY) return; open = true; PAGES = []; CUR = 0; lastQ = null; need = null; stable = 0; cool = 0; revFrom = false;
+  if (DEST === 'vault' && !KEY) return; open = true; PAGES = []; CUR = 0; lastQ = null; need = null; stable = 0; cool = 0; revFrom = false; CARD = null; RETAKE = null; scanPrefsRelire();
   drawPg(); drawMode(); pane('scCam'); hint('Placez le document dans l’écran', false); show('scan'); camStart();
 };
 function scanClose(silent) {

@@ -114,13 +114,35 @@ function openLockScreen() {
 
 /* ---------- Création du coffre ---------- */
 let sMode = 'calc', sPin = '', sFirst = null;
-const MINPIN = 6;   // nouveaux codes : 6 chiffres minimum (les anciens codes à 4 chiffres restent valables)
+const MINPIN = 8, MAXPIN = 16;   // nouveaux codes : 8 chiffres minimum (12 conseillés) ; les anciens codes restent valables
+// code trop facile à deviner : même chiffre partout, suite (12345678), motif répété (12121212), date de naissance
+function pinFaible(p) {
+  if (/^(\d)\1+$/.test(p)) return 'Un seul chiffre répété : trop facile';
+  const up = '01234567890123456789', down = '98765432109876543210';
+  if (up.includes(p) || down.includes(p)) return 'Une suite de chiffres : trop facile';
+  for (let k = 1; k <= 4; k++) if (p.length % k === 0 && p.length > k && p.slice(0, k).repeat(p.length / k) === p) return 'Un motif répété : trop facile';
+  if (p.length === 8 && /^(0[1-9]|[12]\d|3[01])(0[1-9]|1[0-2])(19|20)\d\d$/.test(p)) return 'Ressemble à une date de naissance';
+  return '';
+}
+function pinForce(p) {   // 0 à 3
+  if (!p) return 0; if (p.length < MINPIN || pinFaible(p)) return 1;
+  const diff = new Set(p).size; return p.length >= 12 && diff >= 5 ? 3 : p.length >= 10 && diff >= 4 ? 3 : 2;
+}
+const pinOk = p => new RegExp(`^\\d{${MINPIN},${MAXPIN}}$`).test(p || '');
+const PIN_REGLE = `Le code doit faire ${MINPIN} à ${MAXPIN} chiffres`;
+function forceDraw(p) {   // jauge de solidité du code, sous les points
+  let el = $('#sforce'); if (!el) { el = document.createElement('div'); el.id = 'sforce'; $('#sdots').after(el); }
+  if (p === null) { el.className = 'hide'; return; }
+  const f = pinForce(p), L = ['Tapez au moins 8 chiffres', 'Trop faible', 'Correct', 'Excellent'], need = p.length && p.length < MINPIN ? `Encore ${MINPIN - p.length} chiffre${MINPIN - p.length > 1 ? 's' : ''}` : '';
+  el.className = 'f' + (p.length ? f : 0);
+  el.innerHTML = `<i><b></b><b></b><b></b></i><span>${need || (p.length ? (pinFaible(p) || L[f]) : L[0])}${f === 2 ? ' · 12 chiffres = excellent' : ''}</span>`;
+}
 function setupFlow() {
   sPin = ''; sFirst = null;
   $('#stitle').textContent = 'Créez votre coffre secret';
-  $('#ssub').textContent = "Choisissez un code de 6 à 12 chiffres. Sans ce code, personne ne peut ouvrir vos fichiers (même pas vous : ne l'oubliez pas).";
+  $('#ssub').textContent = "Choisissez un code de 8 à 16 chiffres (12 conseillés). Sans ce code, personne ne peut ouvrir vos fichiers (même pas vous : ne l'oubliez pas).";
   $('#smode').classList.remove('hide');
-  drawDots($('#sdots'), 0); $('#smsg').textContent = '';
+  drawDots($('#sdots'), 0); $('#smsg').textContent = ''; forceDraw('');
   addOkKey();
   show('setup');
 }
@@ -129,16 +151,19 @@ function addOkKey() {
   buildPad($('#spad'), async k => {
     $('#smsg').textContent = '';
     if (k === '⌫') sPin = sPin.slice(0, -1);
-    else if (sPin.length < 12) sPin += k;
+    else if (sPin.length < MAXPIN) sPin += k;
     drawDots($('#sdots'), sPin.length);
     okBtn.disabled = sPin.length < MINPIN;
     okBtn.style.opacity = sPin.length < MINPIN ? .3 : 1;
+    if (sFirst === null) forceDraw(sPin);
   });
   const okBtn = $('#spad').children[9];
   okBtn.disabled = true; okBtn.className = 't'; okBtn.textContent = 'OK'; okBtn.style.opacity = .3;
   okBtn.onclick = async () => {
     if (sPin.length < MINPIN) return;
+    if (sFirst === null && pinFaible(sPin)) { shake($('#sdots')); $('#smsg').textContent = pinFaible(sPin) + '. Choisissez-en un autre.'; sPin = ''; drawDots($('#sdots'), 0); forceDraw(''); return; }
     if (sFirst === null) {
+      forceDraw(null);
       sFirst = sPin; sPin = ''; drawDots($('#sdots'), 0); okBtn.disabled = true; okBtn.style.opacity = .3;
       $('#stitle').textContent = 'Confirmez le code'; $('#ssub').textContent = 'Tapez le même code une deuxième fois.'; $('#smode').classList.add('hide');
       return;
@@ -147,7 +172,7 @@ function addOkKey() {
     $('#smsg').textContent = ''; $('#ssub').textContent = 'Création du coffre…';
     const master = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
     await mset('key', await wrap(master, sPin));
-    CFG.mode = sMode; await mset('cfg', CFG);
+    CFG.mode = sMode; CFG.plmin = Math.min(MINPIN, sPin.length); await mset('cfg', CFG);
     KEY = master; sPin = ''; sFirst = null;
     await openVault();
     const how = CFG.mode === 'calc'
@@ -161,7 +186,7 @@ function addOkKey() {
 let lockPin = '';
 buildPad($('#lpad'), k => {
   $('#lmsg').textContent = '';
-  if (k === '⌫') lockPin = lockPin.slice(0, -1); else if (lockPin.length < 12) lockPin += k;
+  if (k === '⌫') lockPin = lockPin.slice(0, -1); else if (lockPin.length < MAXPIN) lockPin += k;
   drawDots($('#ldots'), lockPin.length);
   lockOk.style.opacity = lockPin.length < 4 ? .3 : 1;
 });
@@ -205,6 +230,7 @@ async function tryUnlock(pin, how = 'code') {
   }
   await mset('guard', { n: 0, until: 0 });
   SHORTPIN = !DECOY && pin.length < MINPIN;
+  if (!DECOY && CFG.plmin !== Math.min(MINPIN, pin.length)) { CFG.plmin = Math.min(MINPIN, pin.length); try { await mset('cfg', CFG); } catch (e) {} }
   // ancien coffre : on renforce la protection du code (600 000 itérations) sans rien demander
   try { const r = await mget(slot); if (!r.it || r.it < ITER) await mset(slot, await wrap(KEY, pin)); } catch (e) {}
   sessFails = 0; snapDone = false;
@@ -904,7 +930,8 @@ setTimeout(addNoteHash, 300);
 let sT, sTried = '';
 async function secretTry() {
   const v = $('#nsearch').value.trim();
-  if (!/^\d{4,12}$/.test(v) || v === sTried) return;
+  // une recherche de nombre (« 2026 ») ne compte jamais comme un essai si le code est long
+  if (!/^\d{4,16}$/.test(v) || v === sTried || v.length < (CFG.plmin || 4)) return;
   if (await guardWait()) return;   // pendant l'attente : rien ne se passe, le bloc-notes reste un bloc-notes
   sTried = v;
   if (await tryUnlock(v, 'bloc-notes')) { $('#nsearch').value = ''; $('#nsearch').blur(); sTried = ''; }
@@ -1012,6 +1039,17 @@ async function inboxKeys() {
   await mset('inboxPriv', await encB(KEY, await crypto.subtle.exportKey('pkcs8', kp.privateKey)));
   await mset('inboxPub', await crypto.subtle.exportKey('spki', kp.publicKey));
 }
+/* Dépôt chiffré depuis le bloc-notes (coffre fermé) : seule la clé publique sert, seul le vrai code pourra relire.
+   Le fichier rejoint le coffre à la prochaine ouverture. */
+window.coffreDepot = async (bytes, meta) => {
+  const pub = await mget('inboxPub'); if (!pub) return false;
+  const pk = await crypto.subtle.importKey('spki', pub, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt']);
+  const ak = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']), iv = rnd(12), miv = rnd(12);
+  const m = enc.encode(JSON.stringify({ name: meta.name, type: meta.type, size: bytes.length, t: Date.now(), x: { thumb: meta.thumb || null, scan: meta.scan || 0, kind: meta.kind || '' } }));
+  const rec = { k: await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, pk, await crypto.subtle.exportKey('raw', ak)), iv, data: await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, ak, bytes), miv, m: await crypto.subtle.encrypt({ name: 'AES-GCM', iv: miv }, ak, m) };
+  await mset('in_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8), rec);
+  return true;
+};
 async function inboxFile() {
   if (DECOY || !KEY) return;
   const keys = (await tx('meta', 'readonly', s => s.getAllKeys())).filter(k => /^in_/.test(k));
@@ -1031,13 +1069,13 @@ async function inboxFile() {
         meta = JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: r.miv }, ak, r.m)));
         buf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: r.iv }, ak, r.data);
       }
-      await addFile(new File([buf], meta.name, { type: meta.type, lastModified: meta.t }));
+      await addFile(new File([buf], meta.name, { type: meta.type, lastModified: meta.t }), undefined, meta.x && typeof meta.x === 'object' ? { thumb: meta.x.thumb || null, scan: meta.x.scan || 0, kind: meta.x.kind || kindOf(meta.type) } : undefined);
       await tx('meta', 'readwrite', s => s.delete(k));
       n++;
     } catch (e) { console.warn('inbox', e); }
   }
   bar.classList.add('hide');
-  if (n) { ITEMS.sort((a, b) => b.added - a.added); render(); toast(`${n} fichier${n > 1 ? 's' : ''} ajouté${n > 1 ? 's' : ''} depuis la galerie 🔐`, 3500); }
+  if (n) { ITEMS.sort((a, b) => b.added - a.added); render(); toast(`${n} fichier${n > 1 ? 's' : ''} rangé${n > 1 ? 's' : ''} dans le coffre 🔐`, 3500); }
   try { if (/[?&]shared=/.test(location.search)) history.replaceState(null, '', location.pathname); } catch (e) {}
 }
 
@@ -1073,6 +1111,12 @@ async function openVault() {
   if (GD && !gLive() && navigator.userActivation && navigator.userActivation.isActive) gReconnect(); else sync();
   setTimeout(checkIntruders, 300);
   if (CS && CS.kv !== 2) setTimeout(() => { if (KEY && CS && CS.kv !== 2 && !$('#mod').classList.contains('on')) askUpgrade(); }, 1500);
+  // code trop court : on propose de le renforcer (une fois par jour au plus)
+  if (SHORTPIN && Date.now() - (CFG.pinNag || 0) > 864e5) setTimeout(async () => {
+    if (!KEY || DECOY || $('#mod').classList.contains('on')) return;
+    CFG.pinNag = Date.now(); await mset('cfg', CFG);
+    if (await ask({ title: '🔐 Renforcez votre code', text: `Votre code est court. Le coffre bloque les essais sur le téléphone, mais un expert qui copie les données pourrait trouver un code court en quelques minutes.<br><br><b>Avec 12 chiffres, il lui faudrait des années.</b>`, ok: 'Changer maintenant', cancel: 'Plus tard' })) $('#r_pin').onclick();
+  }, 2200);
 }
 function lockNow() {
   stopShow();
@@ -1315,14 +1359,14 @@ async function storeItem(id, buf, meta) {
   });
 }
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-async function addFile(f, name) {
+async function addFile(f, name, extra) {
   const id = newId(), kind = kindOf(f.type || '');
   let thumb = null, d = 0, w = 0, h = 0;
   try {
     if (kind === 'photo') ({ thumb, w, h } = await imgThumb(f));
     else if (kind === 'video') ({ thumb, d } = await vidThumb(f));
   } catch (e) {}
-  const meta = { name: name || f.name || 'sans-nom', type: f.type || 'application/octet-stream', size: f.size, kind, thumb, dur: d, w, h, added: Date.now(), taken: f.lastModified || Date.now(), album: ALBUM || '' };
+  const meta = { name: name || f.name || 'sans-nom', type: f.type || 'application/octet-stream', size: f.size, kind, thumb, dur: d, w, h, added: Date.now(), taken: f.lastModified || Date.now(), album: ALBUM || '', ...(extra || {}) };
   await storeItem(id, await f.arrayBuffer(), meta);
   ITEMS.push({ id, ...meta });
 }
@@ -1527,6 +1571,26 @@ async function drawSets() {
   $('#e_intr').textContent = CFG.intr ? 'Activée · après 3 codes faux' : 'Désactivée';
   const log = (await mget('log')) || [];
   $('#e_log').textContent = log.length ? `${log.length} · dernière ${when(log[log.length - 1].t)}` : 'Aucune';
+  secuDraw();
+}
+/* Niveau de sécurité : une note sur 100 et la liste de ce qui reste à faire, chaque ligne mène au bon réglage */
+async function secuDraw() {
+  const box = $('#secu'); if (!box || DECOY) { box && box.classList.add('hide'); return; }
+  const bio = !!(await mget('bio')), decoy = !!(await mget('key2')), ligne = !!(CS || GD), fort = !!(CS ? CS.kv === 2 : GD);
+  const C = [
+    { ok: !SHORTPIN && (CFG.plmin || 0) >= MINPIN, w: 30, t: 'Code de 8 chiffres ou plus', a: 'r_pin', s: 'Le plus important : 12 chiffres conseillés' },
+    { ok: CFG.auto <= 1, w: 15, t: 'Verrouillage rapide', a: 'segAuto', s: 'Le coffre se referme vite tout seul' },
+    { ok: ligne, w: 15, t: 'Sauvegarde en ligne chiffrée', a: ligne ? null : 'c_on', s: 'Rien n’est perdu si le téléphone l’est' },
+    { ok: !ligne || fort, w: 10, t: 'Sauvegarde protégée par mot de passe', a: 'c_up', s: 'La clé en ligne ne dépend pas du code' },
+    { ok: decoy, w: 10, t: 'Faux code', a: 'r_decoy', s: 'Ouvre un faux coffre si on vous force' },
+    { ok: !!CFG.intr, w: 10, t: 'Photo de l’intrus', a: 'r_intr', s: 'Photo prise après 3 codes faux' },
+    { ok: bio || !bioSupported(), w: 10, t: 'Empreinte', a: 'r_bio', s: 'Ouvrir vite sans montrer son code' }
+  ];
+  const sc = C.reduce((a, c) => a + (c.ok ? c.w : 0), 0), col = sc >= 85 ? '#30d158' : sc >= 60 ? '#ffd60a' : '#ff453a', lab = sc >= 85 ? 'Excellent' : sc >= 60 ? 'Bon, peut mieux faire' : 'À renforcer';
+  box.classList.remove('hide');
+  box.innerHTML = `<div class="sh"><div class="sr" style="--p:${sc};--c:${col}"><b>${sc}</b></div><div><b>Niveau de sécurité</b><small style="color:${col}">${lab}</small></div></div>` +
+    C.map((c, i) => `<button class="sl ${c.ok ? 'ok' : ''}" data-i="${i}"><i>${c.ok ? '✓' : '!'}</i><span>${c.t}<small>${c.s}</small></span>${c.ok || !c.a ? '' : '<em>›</em>'}</button>`).join('');
+  box.querySelectorAll('.sl').forEach(b => b.onclick = () => { const c = C[+b.dataset.i]; if (c.ok || !c.a) return; const el = $('#' + c.a); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (el.tagName === 'BUTTON' && !el.classList.contains('hide')) setTimeout(() => el.click(), 350); else { el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1400); } });
 }
 $('#bset').onclick = async () => {
   drawSets(); drawCloud(); drawDrive(); show('sets'); $('#sets').scrollTop = 0;
@@ -1552,13 +1616,14 @@ $('#r_pin').onclick = async () => {
   const old = await ask({ title: 'Changer le code', text: 'Code actuel :', input: '', ph: '••••', ok: 'Suivant', pw: true });
   if (old === null) return;
   if (!(await opens(await mget(mine), old))) return toast('Code actuel incorrect');
-  const n1 = await ask({ title: 'Nouveau code', text: '6 à 12 chiffres :', input: '', ph: '••••', ok: 'Suivant', pw: true });
+  const n1 = await ask({ title: 'Nouveau code', text: '8 à 16 chiffres. <b>12 chiffres</b> conseillés : impossible à deviner, même pour un expert.', input: '', ph: '••••••••••••', ok: 'Suivant', pw: true });
   if (n1 === null) return;
-  if (!/^\d{6,12}$/.test(n1)) return toast('Le code doit faire 6 à 12 chiffres');
+  if (!pinOk(n1)) return toast(PIN_REGLE);
+  if (pinFaible(n1)) return toast(pinFaible(n1) + '. Choisissez-en un autre.', 3000);
   if (await opens(await mget(other), n1)) return toast('Choisissez un autre code');
   const n2 = await ask({ title: 'Confirmez le nouveau code', input: '', ph: '••••', ok: 'Valider', pw: true });
   if (n2 !== n1) return toast('Les deux codes sont différents');
-  await mset(mine, await wrap(KEY, n1)); if (!DECOY) SHORTPIN = false; drawSets();
+  await mset(mine, await wrap(KEY, n1)); if (!DECOY) { SHORTPIN = false; CFG.plmin = Math.min(MINPIN, n1.length); await mset('cfg', CFG); } drawSets();
   toast('Code modifié ✅'); sync();
 };
 /* Empreinte */
@@ -1581,9 +1646,9 @@ async function decoyKey() {
   return crypto.subtle.importKey('raw', await decB(KEY, r), { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
 }
 async function askNewDecoy() {
-  const c1 = await ask({ title: 'Faux code', text: "Choisissez un code (6 à 12 chiffres) <b>différent</b> de votre vrai code. Il ouvrira un faux coffre, séparé du vrai.", input: '', ph: '••••', ok: 'Suivant', pw: true });
+  const c1 = await ask({ title: 'Faux code', text: "Choisissez un code (8 à 16 chiffres) <b>différent</b> de votre vrai code. Il ouvrira un faux coffre, séparé du vrai.", input: '', ph: '••••', ok: 'Suivant', pw: true });
   if (c1 === null) return null;
-  if (!/^\d{6,12}$/.test(c1)) { toast('Le code doit faire 6 à 12 chiffres'); return null; }
+  if (!pinOk(c1)) { toast(PIN_REGLE); return null; }
   if (await opens(await mget('key'), c1)) { toast("C'est votre vrai code : choisissez-en un autre"); return null; }
   const c2 = await ask({ title: 'Confirmez le faux code', input: '', ph: '••••', ok: 'Valider', pw: true });
   if (c2 !== c1) { toast('Les deux codes sont différents'); return null; }
@@ -1972,8 +2037,9 @@ async function sbRestore() {
     // nouveau téléphone : on choisit le code de ce téléphone
     let pin = null;
     while (pin === null) {
-      const p1 = await ask({ title: 'Code de ce téléphone', text: 'Choisissez le code secret (6 à 12 chiffres) pour ouvrir le coffre sur ce téléphone :', input: '', ph: '••••••', ok: 'Suivant', pw: true, cancel: '' });
-      if (!/^\d{6,12}$/.test(p1 || '')) { toast('Le code doit faire 6 à 12 chiffres'); continue; }
+      const p1 = await ask({ title: 'Code de ce téléphone', text: 'Choisissez le code secret (8 à 16 chiffres) pour ouvrir le coffre sur ce téléphone :', input: '', ph: '••••••', ok: 'Suivant', pw: true, cancel: '' });
+      if (!pinOk(p1)) { toast(PIN_REGLE); continue; }
+      if (pinFaible(p1)) { toast(pinFaible(p1), 2600); continue; }
       const p2 = await ask({ title: 'Confirmez le code', input: '', ph: '••••••', ok: 'Valider', pw: true, cancel: '' });
       if (p2 === p1) pin = p1; else toast('Les deux codes sont différents');
     }
@@ -2219,8 +2285,9 @@ async function gRestore() {
   if (!KEY) return;
   let pin = null;
   while (pin === null) {
-    const p1 = await ask({ title: 'Code de ce téléphone', text: 'Choisissez le code secret (6 à 12 chiffres) pour ouvrir le coffre sur ce téléphone :', input: '', ph: '••••••', ok: 'Suivant', pw: true, cancel: '' });
-    if (!/^\d{6,12}$/.test(p1 || '')) { toast('Le code doit faire 6 à 12 chiffres'); continue; }
+    const p1 = await ask({ title: 'Code de ce téléphone', text: 'Choisissez le code secret (8 à 16 chiffres) pour ouvrir le coffre sur ce téléphone :', input: '', ph: '••••••', ok: 'Suivant', pw: true, cancel: '' });
+    if (!pinOk(p1)) { toast(PIN_REGLE); continue; }
+      if (pinFaible(p1)) { toast(pinFaible(p1), 2600); continue; }
     const p2 = await ask({ title: 'Confirmez le code', input: '', ph: '••••••', ok: 'Valider', pw: true, cancel: '' });
     if (p2 === p1) pin = p1; else toast('Les deux codes sont différents');
   }

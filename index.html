@@ -317,6 +317,28 @@ button.it:active{background:#ffffff0b}
 #bcloud i{position:absolute;right:-3px;bottom:-3px;font-style:normal;font-size:10px;width:17px;height:17px;border-radius:50%;display:grid;place-items:center;background:#555;color:#fff;font-weight:700;box-shadow:0 0 0 2px var(--bg)}
 #bcloud i.ok{background:var(--ok)}#bcloud i.run{background:#0a84ff;animation:spin 1.2s linear infinite}#bcloud i.err{background:var(--red)}#bcloud i.off{background:#555}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* ---------- Niveau de sécurité ---------- */
+.secu{margin:0 0 24px;padding:4px 0}
+.secu .sh{display:flex;align-items:center;gap:14px;padding:14px 16px 10px}
+.secu .sh b{display:block;font-size:17px}.secu .sh small{font-size:13.5px;font-weight:600}
+.sr{width:58px;height:58px;flex:none;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--c) calc(var(--p)*1%),#ffffff14 0);position:relative}
+.sr:before{content:'';position:absolute;inset:5px;border-radius:50%;background:var(--card)}
+.sr b{position:relative;font-size:18px!important;font-variant-numeric:tabular-nums}
+.secu .sl{display:flex;align-items:center;gap:12px;width:100%;padding:9px 16px;text-align:left;font-size:15px}
+.secu .sl i{width:24px;height:24px;flex:none;border-radius:50%;display:grid;place-items:center;font-style:normal;font-size:13px;font-weight:800;background:#ff9f0a26;color:#ff9f0a}
+.secu .sl.ok i{background:#30d15826;color:#30d158}
+.secu .sl span{flex:1}.secu .sl small{display:block;color:var(--mut);font-size:12.5px;margin-top:1px}
+.secu .sl.ok span{color:#c7c7cc}.secu .sl em{font-style:normal;color:#5a5a62;font-size:22px}
+.secu .sl:not(.ok):active{background:#ffffff0b}
+.flash{animation:flashs 1.4s ease}@keyframes flashs{0%,50%{box-shadow:0 0 0 2px var(--gold)}}
+/* codes longs : points plus serrés */
+.dots:has(i:nth-child(13)){gap:7px}.dots:has(i:nth-child(13)) i{width:11px;height:11px}
+#sforce{display:flex;flex-direction:column;align-items:center;gap:6px;margin:-14px 0 18px;min-height:30px}
+#sforce i{display:flex;gap:5px}#sforce i b{width:34px;height:4px;border-radius:3px;background:#ffffff24;transition:background .2s}
+#sforce span{font-size:12.5px;color:#a3a3ad}
+#sforce.f1 i b:nth-child(1){background:#ff453a}#sforce.f1 span{color:#ff8a80}
+#sforce.f2 i b:nth-child(-n+2){background:#ffd60a}
+#sforce.f3 i b{background:#30d158}#sforce.f3 span{color:#6fe3a2}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -375,7 +397,7 @@ button.it:active{background:#ffffff0b}
 <section id="setup" class="scr">
   <div class="logo"><svg class="i"><use href="#i-shield"/></svg></div>
   <h1 id="stitle">Créez votre coffre secret</h1>
-  <p class="sub" id="ssub">Choisissez un code de 6 à 12 chiffres. Sans ce code, personne ne peut ouvrir vos fichiers (même pas vous : ne l'oubliez pas).</p>
+  <p class="sub" id="ssub">Choisissez un code de 8 à 16 chiffres (12 conseillés). Sans ce code, personne ne peut ouvrir vos fichiers (même pas vous : ne l'oubliez pas).</p>
   <div id="smode">
     <div class="choice">
       <button data-m="calc" class="on"><b>📝</b>Caché dans un bloc-notes</button>
@@ -440,13 +462,15 @@ button.it:active{background:#ffffff0b}
       <div style="flex:1;min-width:0"><b>Coffre protégé</b><small id="e_space">…</small><div class="meter"><i id="e_meter"></i></div></div>
     </div>
 
+    <div class="card secu hide" id="secu"></div>
+
     <div class="sec"><h4>Ouverture du coffre</h4>
       <div class="card">
         <div class="it"><span class="ico y">🎭</span><span class="lb">Déguisement<small id="n_mode"></small></span></div>
         <div class="seg" id="segMode"><button data-v="calc">📝 Bloc-notes</button><button data-v="lock">🔒 Écran de code</button></div>
         <div class="it"><span class="ico p">⏱</span><span class="lb">Verrouillage automatique<small>Le coffre se referme tout seul</small></span></div>
         <div class="seg" id="segAuto"><button data-v="0">Immédiat</button><button data-v="1">1 min</button><button data-v="5">5 min</button><button data-v="15">15 min</button></div>
-        <button class="it" id="r_pin"><span class="ico gr">🔑</span><span class="lb">Changer le code secret<small id="e_pin" class="hide" style="color:#ff9f0a">Code court : passez à 6 chiffres ou plus</small></span><span class="ch">›</span></button>
+        <button class="it" id="r_pin"><span class="ico gr">🔑</span><span class="lb">Changer le code secret<small id="e_pin" class="hide" style="color:#ff9f0a">Code court : passez à 8 chiffres ou plus (12 conseillés)</small></span><span class="ch">›</span></button>
         <button class="it" id="r_bio"><span class="ico g">👆</span><span class="lb">Empreinte / Face ID<small id="e_bio">Désactivé</small></span><span class="ch">›</span></button>
       </div>
     </div>
@@ -503,7 +527,7 @@ button.it:active{background:#ffffff0b}
         <button class="it dg" id="r_wipe"><span class="ico r">🗑</span><span class="lb">Tout effacer de ce téléphone</span></button>
       </div>
     </div>
-    <p class="foot">Chiffrement AES-256 sur l'appareil<br>Seul votre code peut ouvrir ce coffre<br>Version 6</p>
+    <p class="foot">Chiffrement AES-256 sur l'appareil<br>Seul votre code peut ouvrir ce coffre<br>Version 6<br>Créée par Ahmed El Farissi · Media Shield</p>
   </div>
   <input type="file" id="rin" class="hide">
 </section>

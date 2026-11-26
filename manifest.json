@@ -1,6 +1,7 @@
 {
   "name": "Notes",
   "short_name": "Notes",
+  "description": "Bloc-notes et scanner de documents — créé par Ahmed El Farissi · Media Shield",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

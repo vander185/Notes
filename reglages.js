@@ -109,7 +109,21 @@ button[hidden],.ea button.hide{display:none!important}
 #nset .seg button.on{background:#2c2c33;color:#fff;box-shadow:0 1px 4px #0006}
 #nset .lbl{padding:12px 14px 8px;color:#fff;font-size:16px;display:flex;justify-content:space-between}
 #nset .lbl span{color:#8e8e96;font-size:14px}
-#nset .ver{text-align:center;color:#5a5a60;font-size:12.5px;margin:26px 0 0}
+#nset .ver{text-align:center;color:#5a5a60;font-size:12.5px;margin:26px 0 0;line-height:1.6}
+#nset .ver b{color:#8e8e93;font-weight:600}
+.apropos{text-align:center;padding:4px 4px 2px}
+.apropos .lg{width:76px;height:76px;margin:6px auto 12px;border-radius:22px;background:url(icon-192.png) center/cover,#1c1c1e;box-shadow:0 10px 30px #0009,0 0 0 1px #ffffff14}
+.apropos h3{margin:0;font-size:22px}
+.apropos .v{color:#8e8e93;font-size:13px;margin:2px 0 16px}
+.apropos .crea{background:linear-gradient(150deg,#211c0e,#141416 60%);border:1px solid color-mix(in srgb,var(--acc,#e5b400) 35%,transparent);border-radius:18px;padding:16px;text-align:left;margin-bottom:12px}
+.apropos .crea small{display:block;color:var(--acc,#e5b400);font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+.apropos .crea b{display:block;font-size:19px;color:#fff}
+.apropos .crea i{display:block;font-style:normal;color:#c7c7cc;font-size:14px;margin-top:2px}
+.apropos .crea p{color:#a1a1a6;font-size:14px;line-height:1.5;margin:10px 0 0;text-align:left}
+.apropos .ms{display:flex;gap:12px;align-items:center;background:#141416;border:1px solid #ffffff0d;border-radius:18px;padding:14px;text-align:left;margin-bottom:12px}
+.apropos .ms .mi{flex:none;width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-size:22px;background:color-mix(in srgb,var(--acc,#e5b400) 18%,transparent)}
+.apropos .ms b{display:block;font-size:16px;color:#fff}.apropos .ms span{color:#a1a1a6;font-size:13px;line-height:1.45}
+.apropos .cp{color:#636366;font-size:12px;line-height:1.6;margin:6px 0 4px}
 .ico.c1{background:linear-gradient(135deg,#ff9f0a,#ff6b00)}.ico.c2{background:linear-gradient(135deg,#0a84ff,#5e5ce6)}.ico.c3{background:linear-gradient(135deg,#30d158,#00a86b)}.ico.c4{background:linear-gradient(135deg,#ff375f,#ff2d92)}.ico.c5{background:linear-gradient(135deg,#bf5af2,#7d3cf0)}.ico.c6{background:linear-gradient(135deg,#64d2ff,#0a84ff)}.ico.c7{background:linear-gradient(135deg,#8e8e93,#5a5a60)}.ico.c8{background:linear-gradient(135deg,#ffd60a,#ff9f0a)}
 `;
 const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
@@ -146,15 +160,31 @@ function dessiner() {
     rw('auto', '⚡', 'c1', 'Déclenchement automatique', 'Photo prise dès que le document est stable', sw(scp.a !== false)) +
     rw('filtre', '🎨', 'c4', 'Filtre par défaut', '', vl(F[scp.f || 'auto'] || 'Auto couleur')) +
     rw('qual', '💎', 'c2', 'Qualité des scans', 'Plus haut = plus net, fichier plus lourd', vl({ std: 'Standard', haute: 'Haute', max: 'Maximale' }[scp.q || 'haute'])) +
-    rw('nom', '🏷️', 'c8', 'Nom des scans', p.nomAuto !== false ? 'Titre lu dans le document (ex. « Facture 118 – Engie »)' : 'Suivi de la date et de l’heure', vl(p.nomAuto !== false ? 'Automatique' : p.nomScan)) +
+    rw('psize', '📐', 'c6', 'Format des PDF', 'Taille réelle de la page à l’impression', vl({ auto: 'Taille de la page', a4: 'A4', lettre: 'Lettre US' }[scp.p || 'auto'] || 'Taille de la page')) +
+    rw('verif', '🔍', 'c5', 'Vérifier les bords à chaque scan', 'Ouvre l’écran des 4 coins après chaque photo', sw(!!scp.v)) +
+    rw('grille', '▦', 'c8', 'Grille d’aide', 'Lignes sur la caméra pour bien aligner', sw(!!scp.g)) +
+    rw('son', '🔊', 'c1', 'Son de l’obturateur', 'Petit clic à chaque photo', sw(scp.s !== false)) +
+    rw('nom', '🏷️', 'c8', 'Nom des scans', p.nomAuto !== false ? 'Selon le contenu (ex. « Facture Engie – électricité – novembre 2026 »)' : 'Suivi de la date et de l’heure', vl(p.nomAuto !== false ? 'Automatique' : p.nomScan)) +
     rw('docs', '📄', 'c2', 'Documents scannés', '', vl(nb.docs)) + `</div>` +
 
     `<h6>Données</h6><div class="gp">` +
     rw('export', '📤', 'c3', 'Exporter toutes les notes', 'Un fichier texte, à garder ou partager', vl('')) +
     rw('import', '📥', 'c6', 'Importer des notes', 'Samsung Notes, texte ou Word', vl('')) +
     (nb.del ? rw('vider', '🧹', 'c7', 'Vider la corbeille', nb.del + ' note' + (nb.del > 1 ? 's' : '') + ' supprimée' + (nb.del > 1 ? 's' : ''), '') : '') + `</div>` +
-    `<p class="ver">Notes · ${nb.notes} note${nb.notes > 1 ? 's' : ''} · ${nb.docs} document${nb.docs > 1 ? 's' : ''}</p>`;
+    `<h6>À propos</h6><div class="gp">` + rw('apropos', 'ℹ️', 'c3', 'À propos de Notes', 'Créée par Ahmed El Farissi · Media Shield', vl('')) + `</div>` +
+    `<p class="ver">Notes · ${nb.notes} note${nb.notes > 1 ? 's' : ''} · ${nb.docs} document${nb.docs > 1 ? 's' : ''}<br>Créée par <b>Ahmed El Farissi</b> · <b>Media Shield</b></p>`;
 }
+/* ---------- À propos : l'appli et son créateur ---------- */
+function aPropos() {
+  modal(`<div class="apropos"><div class="lg"></div><h3>Notes</h3><div class="v">Bloc-notes · Scanner de documents · Version 2026</div>
+    <div class="crea"><small>Conçue et créée par</small><b>Ahmed El Farissi</b><i>Gérant et CEO de Media Shield · Bruxelles</i>
+      <p>À la tête de Media Shield, il conçoit des solutions numériques simples et élégantes pour les commerces et pour la vie de tous les jours.</p></div>
+    <div class="ms"><div class="mi">🛡️</div><div><b>Media Shield</b><span>Bornes de commande, bornes de paiement et systèmes de gestion de files d’attente pour les commerces et la restauration.</span></div></div>
+    <p class="cp">© ${new Date().getFullYear()} Media Shield — Ahmed El Farissi<br>Tous droits réservés</p>
+    <div class="btns"><button class="p" id="apOk">Fermer</button></div></div>`);
+  document.getElementById('apOk').onclick = closeModal;
+}
+window.aPropos = aPropos;
 window.reglagesOuvrir = () => { dessiner(); show('nset'); };
 document.getElementById('sback').onclick = () => { notesDraw(); show('notes'); };
 document.getElementById('sbody').addEventListener('click', async e => {
@@ -176,15 +206,20 @@ document.getElementById('sbody').addEventListener('click', async e => {
   if (id === 'confirm') Pset({ confirm: !p.confirm });
   if (id === 'ocr') Pset({ ocr: !p.ocr });
   if (id === 'auto') scpSet({ a: scp.a === false });
+  if (id === 'verif') scpSet({ v: !scp.v });
+  if (id === 'grille') scpSet({ g: !scp.g });
+  if (id === 'son') scpSet({ s: scp.s === false });
+  if (id === 'psize') { const c = scp.p || 'auto'; const v = await sheet('Format des PDF', [['auto', '📄', 'Taille de la page', 'Le PDF garde la forme du document scanné'], ['a4', '🇪🇺', 'A4', '21 × 29,7 cm — Belgique, France, Europe'], ['lettre', '🇺🇸', 'Lettre US', '21,6 × 27,9 cm — États-Unis, Canada']].map(([v, i, l, s2]) => ({ v, ico: i, label: l + (c === v ? '  ✓' : ''), sub: s2 }))); if (v) scpSet({ p: v }); }
   if (id === 'corbeille') { const v = await sheet('Garder les notes supprimées', [7, 30, 90].map(j => ({ v: j, ico: '🗓️', label: j + ' jours' + (p.corbeille === j ? '  ✓' : '') }))); if (v) Pset({ corbeille: v }); }
   if (id === 'filtre') { const v = await sheet('Filtre par défaut', [['auto', '✨', 'Auto couleur', 'Couleurs nettes, fond blanc'], ['doc', '📄', 'Document', 'Papier très blanc, texte bien noir'], ['vif', '🌈', 'Couleurs vives', 'Pour les dépliants, dessins, tampons'], ['photo', '📷', 'Photo', 'Garde l’ambiance, corrige la lumière'], ['tableau', '🧑‍🏫', 'Tableau blanc', 'Efface les reflets, feutres éclatants'], ['bw', '⚫', 'Noir & blanc', 'Idéal pour le texte'], ['encre', '✒️', 'Texte net', 'Noir pur sur blanc pur, comme un fax'], ['gray', '🩶', 'Gris', 'Doux et lisible'], ['eco', '🍃', 'Éco encre', 'Imprime en consommant moins'], ['sepia', '🟤', 'Ancien', 'Ton sépia chaleureux'], ['orig', '🖼️', 'Original', 'Sans retouche']].map(([v, i, l, s]) => ({ v, ico: i, label: l + ((scp.f || 'auto') === v ? '  ✓' : ''), sub: s }))); if (v) scpSet({ f: v }); }
   if (id === 'qual') { const q = scp.q || 'haute'; const v = await sheet('Qualité des scans', [['std', '⚡', 'Standard', 'Rapide, fichiers légers'], ['haute', '💎', 'Haute', 'Photo pleine résolution, texte net (conseillé)'], ['max', '🔬', 'Maximale', 'Le plus net possible, PDF plus lourds']].map(([v, i, l, s]) => ({ v, ico: i, label: l + (q === v ? '  ✓' : ''), sub: s }))); if (v) scpSet({ q: v }); }
-  if (id === 'nom') { const w = await sheet('Nom des scans', [{ v: 'auto', ico: '✨', label: 'Automatique' + (p.nomAuto !== false ? '  ✓' : ''), sub: 'Le genre et le titre lus dans le document : « Facture 2026-118 – Haythem Food – 25-11-2026 »' }, { v: 'fixe', ico: '🏷️', label: 'Nom fixe + date' + (p.nomAuto === false ? '  ✓' : ''), sub: '« ' + p.nomScan + ' 2026-11-25 10h15 »' }]);
+  if (id === 'nom') { const w = await sheet('Nom des scans', [{ v: 'auto', ico: '✨', label: 'Automatique' + (p.nomAuto !== false ? '  ✓' : ''), sub: 'Selon ce qui est écrit : « Facture Engie – électricité – novembre 2026 », « Carte d’identité », « Recette – tajine »' }, { v: 'fixe', ico: '🏷️', label: 'Nom fixe + date' + (p.nomAuto === false ? '  ✓' : ''), sub: '« ' + p.nomScan + ' 2026-11-25 10h15 »' }]);
     if (w === 'auto') Pset({ nomAuto: true });
     if (w === 'fixe') { let v = await ask({ title: 'Nom des scans', text: 'Ex. « Facture » donnera « Facture 2026-11-25 10h15 ».', input: p.nomScan, ok: 'Enregistrer' }); v = (v || '').trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 30); if (v) Pset({ nomScan: v, nomAuto: false }); } }
   if (id === 'tel' && window.SEXPset) { const s = window.SEXPget(); window.SEXPset({ tel: !s.tel }); }
   if (id === 'drive' && window.SEXPset) { const s = window.SEXPget(); if (s.drive) window.SEXPset({ drive: false }); else { window.SEXPset({ drive: true }); try { await window.nAuthPub(); toast('Google Drive relié ✓'); } catch (er) { toast('Connexion Google annulée'); } } }
   if (id === 'docs') return docsOpen();
+  if (id === 'apropos') return aPropos();
   if (id === 'dossiers') { window.dossiersOuvrir && window.dossiersOuvrir(); return; }
   if (id === 'import') { pickerOpen = true; setTimeout(() => pickerOpen = false, 90000); document.getElementById('nin').click(); }
   if (id === 'export') window.notesExporter && window.notesExporter();
