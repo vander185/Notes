@@ -30,7 +30,8 @@ import android.webkit.WebViewClient;
  */
 public class MainActivity extends Activity {
     static final String BASE = "https://vander185.github.io/claire/";
-    private static final int REQ_MIC = 3, REQ_FICHIER = 4, REQ_LIEU = 5, REQ_LIEU_FOND = 6;
+    private static final int REQ_MIC = 3, REQ_FICHIER = 4, REQ_LIEU = 5, REQ_LIEU_FOND = 6, REQ_APPEL = 9, REQ_CONTACTS = 10;
+    private String appelEnAttente = null;
     private ValueCallback<Uri[]> fichierCb;
     private Uri photoUri;
     private WebView web;
@@ -186,6 +187,20 @@ public class MainActivity extends Activity {
         if (code == REQ_LIEU && res.length > 0 && res[0] == PackageManager.PERMISSION_GRANTED && Build.VERSION.SDK_INT >= 29
                 && checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, REQ_LIEU_FOND);
+        // appel demandé à Claire : autorisé → l'appel part ; refusé → le numéro est juste composé
+        if (code == REQ_APPEL && appelEnAttente != null) {
+            String n = appelEnAttente; appelEnAttente = null;
+            lancerAppel(n, res.length > 0 && res[0] == PackageManager.PERMISSION_GRANTED);
+        }
+    }
+
+    private void lancerAppel(String num, boolean direct) {
+        try {
+            Intent i = new Intent(direct ? Intent.ACTION_CALL : Intent.ACTION_DIAL, Uri.fromParts("tel", num, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Exception e) {
+            try { startActivity(new Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", num, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Exception ignored) { }
+        }
     }
 
     @Override
@@ -321,6 +336,21 @@ public class MainActivity extends Activity {
                 String[] acts = { android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS, android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS, android.provider.Settings.ACTION_SETTINGS };
                 for (String a : acts) { try { startActivity(new Intent(a)); return; } catch (Exception ignored) { } }
             });
+        }
+        /* appels et contacts du téléphone */
+        @JavascriptInterface public boolean contactsOk() { return checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED; }
+        @JavascriptInterface public void askContacts() { runOnUiThread(() -> requestPermissions(new String[]{Manifest.permission.READ_CONTACTS}, REQ_CONTACTS)); }
+        @JavascriptInterface public String chercherContacts(String q) { return contactsOk() ? Repertoire.chercher(MainActivity.this, q) : "[]"; }
+        /** appelle tout de suite (avec l'autorisation « Téléphone ») ; sinon la demande d'abord */
+        @JavascriptInterface public String appelerDirect(String num) {
+            if (num == null || !num.matches("[+\\d][\\d ./()-]{2,24}")) return "invalide";
+            if (checkSelfPermission(Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) { runOnUiThread(() -> lancerAppel(num, true)); return "appel"; }
+            appelEnAttente = num;
+            runOnUiThread(() -> requestPermissions(new String[]{Manifest.permission.CALL_PHONE}, REQ_APPEL));
+            return "autorisation";
+        }
+        @JavascriptInterface public boolean appelWhatsApp(String dataId, boolean video) {
+            try { return contactsOk() && Repertoire.appelWhatsApp(MainActivity.this, Long.parseLong(dataId), video); } catch (Exception e) { return false; }
         }
         @JavascriptInterface public void cancelReminder(String id) {
             ((AlarmManager) getSystemService(ALARM_SERVICE)).cancel(ReminderReceiver.pending(MainActivity.this, id, ""));
