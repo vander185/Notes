@@ -11,7 +11,7 @@
 'use strict';
 
 /* ---------- Algorithmes (purs, testables) ---------- */
-const SC = window.SCANCORE = {};
+const SC = (typeof window !== 'undefined' ? window : self).SCANCORE = {};
 
 // niveaux de gris flous d'une image réduite
 SC.gray = (d, w, h) => {
@@ -210,7 +210,7 @@ SC.detect2 = (d, w, h) => {
 };
 // Affinage : chaque côté est recalé sur le bord réel (au demi-pixel), puis les coins = intersections des droites
 SC.refine = (g, w, h, q, R) => {
-  R = R || Math.max(4, Math.hypot(w, h) * .02);
+  R = R || Math.max(4, Math.hypot(w, h) * .012);
   const S = (x, y) => { if (x < 0 || y < 0 || x > w - 1.001 || y > h - 1.001) return NaN; const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0, i = y0 * w + x0;
     return (g[i] * (1 - fx) + g[i + 1] * fx) * (1 - fy) + (g[i + w] * (1 - fx) + g[i + w + 1] * fx) * fy; };
   const cx = q.reduce((a, p) => a + p[0], 0) / 4, cy = q.reduce((a, p) => a + p[1], 0) / 4;
@@ -223,8 +223,13 @@ SC.refine = (g, w, h, q, R) => {
     const N = Math.max(12, Math.min(80, Math.round(L / 6)));
     for (let j = 0; j < N; j++) {
       const t = .06 + .88 * j / (N - 1), px = a[0] + (b[0] - a[0]) * t, py = a[1] + (b[1] - a[1]) * t;
-      let bv = 0, bs = 0, sg = 0;
-      for (let s = -R; s <= R; s += .5) { const v = S(px + nx * (s + 1.5), py + ny * (s + 1.5)) - S(px + nx * (s - 1.5), py + ny * (s - 1.5)); if (Math.abs(v) > bv) { bv = Math.abs(v); bs = s; sg = Math.sign(v); } }
+      // profil du contraste en travers du côté ; on garde le bord net le plus proche du cadre proposé
+      // (pas forcément le plus fort : un bandeau coloré ou une ligne de texte près du bord est plus contrasté que le bord de la feuille)
+      const pr = []; let mx = 0;
+      for (let s = -R; s <= R; s += .5) { const v = S(px + nx * (s + 1.5), py + ny * (s + 1.5)) - S(px + nx * (s - 1.5), py + ny * (s - 1.5)); pr.push([s, v]); if (Math.abs(v) > mx) mx = Math.abs(v); }
+      let bv = 0, bs = 0, sg = 0, bd = 1e9;
+      for (let z = 1; z < pr.length - 1; z++) { const a = Math.abs(pr[z][1]); if (a < 9 || a < mx * .45 || a < Math.abs(pr[z - 1][1]) || a < Math.abs(pr[z + 1][1])) continue;
+        const dd = Math.abs(pr[z][0]); if (dd < bd - .01) { bd = dd; bv = a; bs = pr[z][0]; sg = Math.sign(pr[z][1]); } }
       if (bv > 9) P.push([px + nx * bs, py + ny * bs, sg]);
     }
     if (P.length >= 8) {   // garde le sens de contraste majoritaire (évite le texte près du bord)
@@ -509,6 +514,108 @@ SC.titre = (texte, genre) => {
   return propre(titre).replace(/\s+–\s+–\s+/g, ' – ').slice(0, 80);
 };
 
+/* ---------- Détection v3 : lignes droites (Hough orientée) + cadres notés sur tout leur contour ---------- */
+// gradient « couleur » : luminosité + saturation (feuille jaune sur table blanche, papier coloré…)
+SC.grad = (d, w, h) => {
+  const n = w * h, L = new Float32Array(n), C = new Float32Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) { const r = d[j], g = d[j + 1], b = d[j + 2], mx = r > g ? (r > b ? r : b) : (g > b ? g : b), mn = r < g ? (r < b ? r : b) : (g < b ? g : b); L[i] = r * .299 + g * .587 + b * .114; C[i] = (mx - mn) * .8; }
+  const Lb = SC.blur(L, w, h, 1), Cb = SC.blur(C, w, h, 1), A = SC.sobel(Lb, w, h), B = SC.sobel(Cb, w, h);
+  const G = { gx: Float32Array.from(A.gx), gy: Float32Array.from(A.gy), m: Float32Array.from(A.m), A, B, L: Lb, C: Cb };
+  for (let i = 0; i < n; i++) if (B.m[i] > A.m[i]) { G.gx[i] = B.gx[i]; G.gy[i] = B.gy[i]; G.m[i] = B.m[i]; }
+  return G;
+};
+// note d'un cadre : part de chaque côté qui suit vraiment un bord, avec le même sens de contraste
+SC.quadScore = (G, w, h, q, T) => {
+  const cx = (q[0][0] + q[1][0] + q[2][0] + q[3][0]) / 4, cy = (q[0][1] + q[1][1] + q[2][1] + q[3][1]) / 4, per = [];
+  for (let k = 0; k < 4; k++) {
+    const a = q[k], b = q[(k + 1) % 4], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 10) return { s: 0, min: 0, per: [0, 0, 0, 0] };
+    let nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L;
+    if ((cx - (a[0] + b[0]) / 2) * nx + (cy - (a[1] + b[1]) / 2) * ny > 0) { nx = -nx; ny = -ny; }   // normale vers l'extérieur
+    const N = Math.max(16, Math.min(70, Math.round(L / 3))); let n = 0, lp = 0, ln = 0, cp = 0, cn = 0; const S = [];
+    const ix = (x, y) => { x = Math.round(x); y = Math.round(y); return x < 0 || y < 0 || x >= w || y >= h ? -1 : y * w + x; };
+    for (let j = 0; j < N; j++) {
+      const t = .03 + .94 * j / (N - 1), px = a[0] + (b[0] - a[0]) * t, py = a[1] + (b[1] - a[1]) * t;
+      if (px < 2 || py < 2 || px > w - 3 || py > h - 3) continue;
+      n++; let va = 0, vb = 0;   // contraste de luminosité et de couleur, chacun avec son sens
+      for (let o = -2; o <= 2; o++) { const x = Math.round(px + nx * o), y = Math.round(py + ny * o), i = y * w + x, a1 = G.A.gx[i] * nx + G.A.gy[i] * ny, b1 = G.B.gx[i] * nx + G.B.gy[i] * ny; if (Math.abs(a1) > Math.abs(va)) va = a1; if (Math.abs(b1) > Math.abs(vb)) vb = b1; }
+      S.push([va > T ? 1 : va < -T ? -1 : 0, vb > T ? 1 : vb < -T ? -1 : 0]);
+      // de part et d'autre, un peu plus loin : vraie différence entre la feuille et le fond (une ligne de texte n'en a pas)
+      let li = 0, lo = 0, ci = 0, co = 0, ni = 0, no = 0;
+      for (const o of [3, 5, 7]) { const a1 = ix(px - nx * o, py - ny * o), a2 = ix(px + nx * o, py + ny * o); if (a1 >= 0) { li += G.L[a1]; ci += G.C[a1]; ni++; } if (a2 >= 0) { lo += G.L[a2]; co += G.C[a2]; no++; } }
+      if (ni && no) { const dl = li / ni - lo / no, dc = ci / ni - co / no;
+        if (Math.abs(dl) >= Math.abs(dc)) { if (dl > 7) lp++; else if (dl < -7) ln++; } else { if (dc > 7) cp++; else if (dc < -7) cn++; } }
+    }
+    if (n < N * .5) return { s: 0, min: 0, per: [0, 0, 0, 0] };   // côté surtout hors de l'image
+    let ap = 0, an = 0, bp2 = 0, bn2 = 0; for (const [a1, b1] of S) { if (a1 > 0) ap++; else if (a1 < 0) an++; if (b1 > 0) bp2++; else if (b1 < 0) bn2++; }
+    const sa = ap >= an ? 1 : -1, sb = bp2 >= bn2 ? 1 : -1; let good = 0, bad = 0;
+    for (const [a1, b1] of S) { if (a1 === sa || b1 === sb) good++; else if (a1 || b1) bad++; }
+    const g1 = Math.max(0, good - bad * 1.5) / n, g2 = Math.max(0, Math.max(lp, ln) + Math.max(cp, cn) - 1.5 * (Math.min(lp, ln) + Math.min(cp, cn))) / n;
+    per.push(Math.min(g1, g2 * 1.15));
+  }
+  const mn = Math.min(...per), mean = (per[0] + per[1] + per[2] + per[3]) / 4;
+  return { s: (mean * .55 + mn * .45) * (.72 + .28 * Math.sqrt(SC.area(q) / (w * h))), min: mn, per };
+};
+SC.pct = (a, p) => {   // percentile approché (histogramme), bien plus rapide qu'un tri
+  let mx = 0; for (let i = 0; i < a.length; i++) if (a[i] > mx) mx = a[i];
+  if (!mx) return 0; const B = 1024, hs = new Uint32Array(B), k = (B - 1) / mx; for (let i = 0; i < a.length; i++) hs[(a[i] * k) | 0]++;
+  let c = 0; const lim = a.length * p; for (let b = 0; b < B; b++) { c += hs[b]; if (c >= lim) return (b + .5) / k; } return mx;
+};
+SC.lines = (G, w, h, T, max = 24) => {   // Hough orientée par le gradient : chaque point vote seulement près de sa direction
+  const NT = 180, diag = Math.ceil(Math.hypot(w, h)), NR = diag * 2 + 1, acc = new Float32Array(NT * NR), cs = new Float32Array(NT), sn = new Float32Array(NT);
+  for (let t = 0; t < NT; t++) { cs[t] = Math.cos(t * Math.PI / NT); sn[t] = Math.sin(t * Math.PI / NT); }
+  for (let y = 2; y < h - 2; y++) for (let x = 2; x < w - 2; x++) {
+    const i = y * w + x, m = G.m[i]; if (m < T) continue;
+    let th = Math.atan2(G.gy[i], G.gx[i]); if (th < 0) th += Math.PI; const t0 = Math.round(th * NT / Math.PI);
+    const wt = m < T * 2 ? m / T : 2;
+    for (let dt = -6; dt <= 6; dt++) { let t = t0 + dt, sg = 1; if (t < 0) { t += NT; sg = -1; } else if (t >= NT) { t -= NT; sg = -1; }
+      acc[t * NR + Math.round(sg * (x * cs[t] + y * sn[t])) + diag] += wt; }
+  }
+  const minV = Math.min(w, h) * .18, pk = [];
+  for (let t = 0; t < NT; t++) for (let r = 1; r < NR - 1; r++) { const i = t * NR + r, v = acc[i];
+    if (v < minV || v < acc[i - 1] || v < acc[i + 1] || (t > 0 && v < acc[i - NR]) || (t < NT - 1 && v < acc[i + NR])) continue; pk.push(i); }
+  pk.sort((a, b) => acc[b] - acc[a]);
+  const out = [];
+  for (const i of pk) { if (out.length >= max) break;
+    const t = (i / NR) | 0, r = i % NR - diag, th = t * Math.PI / NT;
+    if (out.some(o => { let dt = Math.abs(o.t - th), dr = Math.abs(o.r - r); if (dt > Math.PI / 2) { dt = Math.PI - dt; dr = Math.abs(o.r + r); } return dt < .09 && dr < 7; })) continue;
+    out.push({ t: th, c: cs[t], s: sn[t], r, v: acc[i] }); }
+  return out;
+};
+SC.detect3 = (d, w, h, G) => {
+  G = G || SC.grad(d, w, h);
+  const T = Math.max(16, SC.pct(G.m, .55) * 3);
+  const Ls = SC.lines(G, w, h, T, 22), HZ = [], VT = [];
+  for (const l of Ls) (Math.abs(l.t - Math.PI / 2) < Math.PI / 4 ? HZ : VT).push(l);
+  const meet = (a, b) => { const den = a.c * b.s - a.s * b.c; if (Math.abs(den) < 1e-6) return null; return [(a.r * b.s - a.s * b.r) / den, (a.c * b.r - a.r * b.c) / den]; };
+  const A = w * h, mgx = w * .12, mgy = h * .12, C = [];
+  for (let i = 0; i < HZ.length; i++) for (let j = i + 1; j < HZ.length; j++) for (let k = 0; k < VT.length; k++) for (let l = k + 1; l < VT.length; l++) {
+    const P = [meet(HZ[i], VT[k]), meet(HZ[i], VT[l]), meet(HZ[j], VT[l]), meet(HZ[j], VT[k])];
+    if (P.some(p => !p || p[0] < -mgx || p[1] < -mgy || p[0] > w + mgx || p[1] > h + mgy)) continue;
+    const q = SC.order(P); if (!q || !SC.convex(q)) continue;
+    const ar = SC.area(q); if (ar < A * .08) continue;
+    let bad = false;
+    for (let z = 0; z < 4 && !bad; z++) { const a = q[(z + 3) % 4], b = q[z], c = q[(z + 1) % 4], v1 = [a[0] - b[0], a[1] - b[1]], v2 = [c[0] - b[0], c[1] - b[1]];
+      const cosA = (v1[0] * v2[0] + v1[1] * v2[1]) / (Math.hypot(...v1) * Math.hypot(...v2)); if (Math.abs(cosA) > .6) bad = true; }   // angles entre 53° et 127°
+    if (bad) continue;
+    C.push(q);
+  }
+  return { C, T, G };
+};
+// détection complète : toutes les méthodes proposent des cadres, une seule note les départage
+SC.detectLive = (d, w, h) => {
+  const R = SC.detect3(d, w, h), G = R.G, T = R.T * .8;
+  const C = R.C.slice();
+  for (const f of [() => SC.detect(d, w, h), () => SC.detectPaper(d, w, h), () => SC.detectEdges(d, w, h, G)]) { try { const q = f(); if (q) C.push(q); } catch (e) {} }
+  const S = C.map(q => ({ q, ...SC.quadScore(G, w, h, q, T) })).filter(c => c.min >= .3);
+  let best = null; for (const c of S) if (!best || c.s > best.s) best = c;
+  if (!best || best.s < .5) return null;
+  // un cadre presque aussi bon qui entoure le meilleur : c'est le vrai bord de la feuille (le meilleur suit un bandeau, un tableau…)
+  const inside = (q, p) => { for (let k = 0; k < 4; k++) if (cross(q[k], q[(k + 1) % 4], p) < -2 * Math.hypot(q[(k + 1) % 4][0] - q[k][0], q[(k + 1) % 4][1] - q[k][1])) return false; return true; };
+  let pick = best, pa = SC.area(best.q);
+  for (const c of S) { const a = SC.area(c.q); if (c.s >= best.s * .94 && a > pa * 1.02 && a < pa * 1.6 && pick.q.every(p => inside(c.q, p))) { pick = c; pa = a; } }
+  return pick.q.map(p => [Math.max(0, Math.min(w, p[0])), Math.max(0, Math.min(h, p[1]))]);
+};
+
 /* ---------- PDF (sans bibliothèque) : une image JPEG par page ---------- */
 SC.pdf = (pages, size) => {   // pages : [{ jpg: Uint8Array, w, h }] ; size : 'auto' (largeur A4) | 'a4' | 'lettre'
   const te = s => new TextEncoder().encode(s), parts = [], offs = []; let len = 0;
@@ -544,7 +651,21 @@ SC.pdfImages = buf => {
   return out;
 };
 
-if (typeof document === 'undefined') return;   // (tests hors navigateur)
+// Dans un Web Worker : la détection tourne à part, l'écran de la caméra reste fluide
+if (typeof document === 'undefined' && typeof importScripts === 'function') {
+  self.onmessage = e => {
+    const { id, d, w, h, m, RW, RH } = e.data; let q = null, lum = 128;
+    try {
+      let s = 0, n = 0; for (let i = 0; i < d.length; i += 64) { s += d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11; n++; } lum = s / n;
+      q = SC.detectLive(d, w, h);
+      if (q && m) { q = q.map(p => [p[0] * RW / w, p[1] * RH / h]); try { q = SC.refine(SC.blur(SC.gray(m, RW, RH), RW, RH, 1), RW, RH, q, Math.max(4, 2.5 * RW / w)); } catch (er) {} }
+      else if (q) q = q.map(p => [p[0] * RW / w, p[1] * RH / h]);
+    } catch (er) { q = null; }
+    self.postMessage({ id, q, lum });
+  };
+}
+if (typeof document === 'undefined') return;   // (tests hors navigateur, worker)
+const SELF = document.currentScript && document.currentScript.src;
 
 /* ---------- Interface ---------- */
 const css = `
@@ -745,13 +866,13 @@ const small = document.createElement('canvas'), sctx = small.getContext('2d', { 
 const mid = document.createElement('canvas'), mctx = mid.getContext('2d', { willReadFrequently: true });
 function detectOn(src, sw, sh, live) {   // renvoie un quadrilatère en coordonnées de la source
   const W = 320, H = Math.max(8, Math.round(sh * W / sw)); small.width = W; small.height = H;
-  sctx.drawImage(src, 0, 0, W, H);
-  let q = SC.detect2(sctx.getImageData(0, 0, W, H).data, W, H);
+  sctx.imageSmoothingQuality = 'medium'; sctx.drawImage(src, 0, 0, W, H);
+  let q = SC.detectLive(sctx.getImageData(0, 0, W, H).data, W, H);
   if (!q) return null;
   // affinage sur une image plus grande : les coins tombent exactement sur les bords de la feuille
   const RW = Math.min(sw, live ? 720 : 1400), RH = Math.max(8, Math.round(sh * RW / sw)); mid.width = RW; mid.height = RH;
   mctx.drawImage(src, 0, 0, RW, RH);
-  try { const g = SC.blur(SC.gray(mctx.getImageData(0, 0, RW, RH).data, RW, RH), RW, RH, 1); q = SC.refine(g, RW, RH, q.map(p => [p[0] * RW / W, p[1] * RH / H])); }
+  try { const g = SC.blur(SC.gray(mctx.getImageData(0, 0, RW, RH).data, RW, RH), RW, RH, 1); q = SC.refine(g, RW, RH, q.map(p => [p[0] * RW / W, p[1] * RH / H]), Math.max(4, 2.5 * RW / W)); }
   catch (e) { q = q.map(p => [p[0] * RW / W, p[1] * RH / H]); }
   const cx = q.reduce((a, p) => a + p[0], 0) / 4, cy = q.reduce((a, p) => a + p[1], 0) / 4;
   return q.map(p => [(p[0] + (cx - p[0]) * .004) * sw / RW, (p[1] + (cy - p[1]) * .004) * sh / RH]);
@@ -772,7 +893,7 @@ async function camStart() {
   track = stream.getVideoTracks()[0];
   try { const c = track.getCapabilities ? track.getCapabilities() : {}; E('scTorch').classList.toggle('hide', !c.torch);
     if (c.focusMode && c.focusMode.includes('continuous')) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {}); } catch (e) {}
-  clearInterval(loop); loop = setInterval(liveDetect, 200);
+  clearInterval(loop); loop = setInterval(liveDetect, 80);
 }
 function noCam(t) { E('scNoTxt').innerHTML = t; E('scNoCam').classList.remove('hide'); hint('Importez une photo du document', false); }
 function camStop() {
@@ -791,7 +912,7 @@ function drawOverlay(q) {
   const c = O.getContext('2d'); c.setTransform(r, 0, 0, r, 0, 0); c.clearRect(0, 0, cw, ch);
   if (!q) return;
   const m = mapV(), P = q.map(p => [p[0] * m.s + m.ox, p[1] * m.s + m.oy]);
-  const col = stable >= 2 ? '#34d07a' : accent();
+  const col = stable > 0 ? '#34d07a' : accent();
   // assombrit tout ce qui n'est pas la feuille
   c.beginPath(); c.rect(0, 0, cw, ch); P.slice().reverse().forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); c.closePath();
   c.fillStyle = '#0000006b'; c.fill();
@@ -813,40 +934,82 @@ function ringProgress(k) {   // anneau du déclencheur : se remplit pendant que 
   c.style.stroke = k == null ? '' : (k >= 1 ? '#34d07a' : accent());
 }
 let shooting = false;
+// détection dans un Web Worker (scan.js lui-même) : l'image de la caméra ne saccade plus pendant les calculs
+let W8 = null, w8busy = false, w8id = 0, w8t = 0, w8f = null;
+function w8() {
+  if (W8 !== null) return W8 || null;
+  try { W8 = new Worker(SELF || 'scan.js'); W8.onmessage = e => w8done(e.data); W8.onerror = () => { W8 = false; w8busy = false; }; } catch (e) { W8 = false; }
+  return W8 || null;
+}
+let lastSeen = 0, steadyFrom = 0;
+const STEADY_MS = 850;   // temps immobile avant le déclenchement automatique
 function liveDetect() {
   const V = E('scV'); if (!open || !V.videoWidth || E('scCam').classList.contains('hide') || shooting) return;
   const vw = V.videoWidth, vh = V.videoHeight;
   if (MODE === 'photo') {   // photo libre : pas de détection, toute l'image est gardée
-    drawOverlay(null); lastQ = null; stable = 0; ringProgress(null);
+    drawOverlay(null); lastQ = null; stable = 0; steadyFrom = 0; ringProgress(null);
     hint('Mode photo : touchez le bouton', true); return;
   }
+  const wk = w8();
+  if (wk) {
+    if (w8busy && Date.now() - w8t < 1500) return;   // le calcul précédent n'est pas fini
+    try {
+      const W = 320, H = Math.max(8, Math.round(vh * W / vw)); small.width = W; small.height = H; sctx.imageSmoothingQuality = 'medium'; sctx.drawImage(V, 0, 0, W, H);
+      const d = sctx.getImageData(0, 0, W, H).data;
+      const RW = Math.min(vw, 720), RH = Math.max(8, Math.round(vh * RW / vw)); mid.width = RW; mid.height = RH; mctx.drawImage(V, 0, 0, RW, RH);
+      const m = mctx.getImageData(0, 0, RW, RH).data;
+      w8busy = true; w8t = Date.now(); w8f = { id: ++w8id, vw, vh, RW, RH };
+      wk.postMessage({ id: w8id, d, w: W, h: H, m, RW, RH }, [d.buffer, m.buffer]);
+      return;
+    } catch (e) { w8busy = false; W8 = false; }
+  }
+  // sans worker : calcul ici même
   let q = null; try { q = detectOn(V, vw, vh, true); } catch (e) {}
-  // éclairage (image réduite déjà en mémoire)
   if (++lumN % 4 === 1) { try { const d = sctx.getImageData(0, 0, small.width, small.height).data; let s = 0, n = 0; for (let i = 0; i < d.length; i += 64) { s += d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11; n++; } lum = s / n; } catch (e) {} }
-  const now = Date.now();
-  if (q && lastQ) { const mv = Math.max(...q.map((p, i) => dist(p, lastQ[i]))) / vw; stable = mv < .025 ? stable + 1 : 0; } else stable = 0;
-  // lissage pour un cadre qui ne tremble pas
-  lastQ = q && lastQ ? q.map((p, i) => [lastQ[i][0] * .5 + p[0] * .5, lastQ[i][1] * .5 + p[1] * .5]) : q;
+  onQuad(q, vw, vh);
+}
+function w8done(r) {
+  w8busy = false; const f = w8f;
+  if (!f || r.id !== f.id || !open || shooting || E('scCam').classList.contains('hide')) return;
+  const V = E('scV'); if (V.videoWidth !== f.vw || V.videoHeight !== f.vh) return;   // la caméra a changé de format entre-temps
+  lum = r.lum;
+  let q = r.q;
+  if (q) { const cx = q.reduce((a, p) => a + p[0], 0) / 4, cy = q.reduce((a, p) => a + p[1], 0) / 4;
+    q = q.map(p => [(p[0] + (cx - p[0]) * .004) * f.vw / f.RW, (p[1] + (cy - p[1]) * .004) * f.vh / f.RH]); }
+  onQuad(q, f.vw, f.vh);
+}
+function onQuad(q, vw, vh) {
+  const now = Date.now(), big = Math.max(vw, vh);
+  if (q) {
+    const mv = lastQ ? Math.max(...q.map((p, i) => dist(p, lastQ[i]))) / big : 1;
+    if (mv < .02) { if (!steadyFrom) steadyFrom = now; } else steadyFrom = 0;
+    // lissage pour un cadre qui ne tremble pas, mais qui suit tout de suite un grand mouvement
+    const k = mv > .06 ? 1 : .5;
+    lastQ = lastQ ? q.map((p, i) => [lastQ[i][0] * (1 - k) + p[0] * k, lastQ[i][1] * (1 - k) + p[1] * k]) : q;
+    lastSeen = now;
+  } else if (lastQ && now - lastSeen < 500) { q = lastQ; }   // une image ratée (flou, reflet) : on garde le cadre un instant
+  else { lastQ = null; steadyFrom = 0; }
+  stable = steadyFrom ? now - steadyFrom : 0;
   drawOverlay(lastQ);
   // après un scan auto : attendre que la page change (ou que le document sorte du cadre) avant le suivant
-  if (need && (!q || Math.max(...q.map((p, i) => dist(p, need[i]))) / vw > .12)) need = null;
+  if (need && (!q || Math.max(...q.map((p, i) => dist(p, need[i]))) / big > .1)) need = null;
   // conseils : trop loin, trop penché, trop sombre
   const area = q ? SC.area(q) / (vw * vh) : 0, petit = q && area < (MODE === 'carte' ? .05 : .12);
   const side = q ? [dist(q[0], q[1]), dist(q[1], q[2]), dist(q[2], q[3]), dist(q[3], q[0])] : null;
   const penche = side && Math.min(side[0] / side[2], side[2] / side[0], side[1] / side[3], side[3] / side[1]) < .66;
   const sombre = lum < 55;
   const pre = MODE === 'carte' ? (CARD ? 'Verso · ' : 'Recto · ') : '';
-  const armed = AUTO && q && !need && !petit && stable >= 2 && now > cool;
-  ringProgress(armed ? (stable - 1) / 5 : null);
-  E('scShot').classList.toggle('go', !!armed && stable >= 6);
+  const armed = AUTO && q && !need && !petit && stable > 0 && now > cool;
+  ringProgress(armed ? stable / STEADY_MS : null);
+  E('scShot').classList.toggle('go', !!armed && stable >= STEADY_MS * .7);
   if (need && AUTO) hint(MODE === 'carte' && CARD ? 'Retournez la carte : verso' : (PAGES.length + (PAGES.length > 1 ? ' pages' : ' page') + ' · placez la page suivante'), true);
   else if (sombre && !torch) hint(E('scTorch').classList.contains('hide') ? 'Trop sombre : ajoutez de la lumière' : 'Trop sombre : allumez la lampe ⚡', 'warn');
   else if (!q) hint(pre + (AUTO ? 'Recherche du document…' : 'Placez le document dans l’écran'), false);
   else if (petit) hint(pre + 'Rapprochez-vous', 'warn');
   else if (penche) hint(pre + 'Tenez le téléphone bien au-dessus', 'warn');
-  else if (AUTO) hint(pre + (stable >= 2 ? 'Ne bougez plus…' : 'Document trouvé'), stable >= 2 ? 'go' : true);
+  else if (AUTO) hint(pre + (stable > 0 ? 'Ne bougez plus…' : 'Document trouvé'), stable > 0 ? 'go' : true);
   else hint(pre + 'Touchez le bouton pour scanner', true);
-  if (armed && stable >= 6) { cool = now + 1500; stable = 0; need = q; capture(); }
+  if (armed && stable >= STEADY_MS) { cool = now + 1500; stable = 0; steadyFrom = 0; need = lastQ; capture(); }
 }
 function toCanvas(src, w, h, cap) {
   cap = cap || Q().cap; const k = Math.min(1, cap / Math.max(w, h)), c = document.createElement('canvas');
@@ -857,20 +1020,46 @@ async function capture() {
   shooting = true;
   try { await capture1(V); } finally { shooting = false; ringProgress(null); E('scShot').classList.remove('go'); }
 }
+// Photo du capteur → même orientation et même cadrage que la vidéo (certains téléphones la renvoient couchée
+// ou avec un autre objectif). Comparaison d'aperçus en niveaux de gris ; null si elle ne correspond pas.
+function tourne(c, r) {
+  if (!r) return c; const o = document.createElement('canvas'); o.width = r & 1 ? c.height : c.width; o.height = r & 1 ? c.width : c.height;
+  const x = o.getContext('2d'); x.translate(o.width / 2, o.height / 2); x.rotate(r * Math.PI / 2); x.drawImage(c, -c.width / 2, -c.height / 2); return o;
+}
+function apercu(c, sx, sy, sw, sh, W, H) {
+  const t = document.createElement('canvas'); t.width = W; t.height = H; const x = t.getContext('2d', { willReadFrequently: true }); x.imageSmoothingQuality = 'high';
+  x.drawImage(c, sx, sy, sw, sh, 0, 0, W, H); const d = x.getImageData(0, 0, W, H).data, g = new Float32Array(W * H); let m = 0;
+  for (let i = 0; i < g.length; i++) { g[i] = d[i * 4] * .3 + d[i * 4 + 1] * .59 + d[i * 4 + 2] * .11; m += g[i]; } m /= g.length;
+  let v = 0; for (let i = 0; i < g.length; i++) { g[i] -= m; v += g[i] * g[i]; } v = Math.sqrt(v) || 1; for (let i = 0; i < g.length; i++) g[i] /= v; return g;
+}
+function memeVue(ph, vid) {
+  try {
+    const vw = vid.width, vh = vid.height, W = 48, H = Math.max(8, Math.round(48 * vh / vw)), a = apercu(vid, 0, 0, vw, vh, W, H);
+    let best = null, bs = -1;
+    for (const r of (ph.width > ph.height) === (vw > vh) ? [0, 2] : [1, 3]) {
+      const c = tourne(ph, r), k = Math.max(c.width, c.height) / Math.max(vw, vh), cw = vw * k, ch = vh * k;
+      const b = apercu(c, (c.width - cw) / 2, (c.height - ch) / 2, cw, ch, W, H); let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+      if (s > bs) { bs = s; best = c; }
+    }
+    return bs > .5 ? best : null;
+  } catch (e) { return null; }
+}
 async function capture1(V) {
   const f = E('scFlash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
   navigator.vibrate && navigator.vibrate(30); clic();
   let src = null;
+  const vid = toCanvas(V, V.videoWidth, V.videoHeight);   // l'image vue à l'écran au moment du déclenchement
   // photo pleine résolution du capteur quand le téléphone le permet (bien plus nette qu'une image de la vidéo)
   if (QUAL !== 'std' && track && window.ImageCapture) {
     try { hint('Photo en haute qualité…', true);
       const ic = new ImageCapture(track), bl = await Promise.race([ic.takePhoto(torch ? {} : { fillLightMode: 'off' }).catch(() => ic.takePhoto()), new Promise((_, ko) => setTimeout(() => ko(new Error('lent')), 3500))]);
       const bm = await createImageBitmap(bl, { imageOrientation: 'from-image' });
-      if (bm.width * bm.height > V.videoWidth * V.videoHeight * 1.2) src = toCanvas(bm, bm.width, bm.height);
+      // la photo doit montrer la même chose que l'écran (même sens, même cadrage) ; sinon on garde l'image de la vidéo
+      if (bm.width * bm.height > V.videoWidth * V.videoHeight * 1.2) src = memeVue(toCanvas(bm, bm.width, bm.height), vid);
       bm.close && bm.close();
     } catch (e) {}
   }
-  if (!src) src = toCanvas(V, V.videoWidth, V.videoHeight);
+  if (!src) src = vid;
   if (MODE === 'photo') { await addPage(src, [[0, 0], [src.width, 0], [src.width, src.height], [0, src.height]], false, { f: 'photo' }); hint('Photo ajoutée ✓', 'go'); return; }
   let q = null; try { q = detectOn(src, src.width, src.height); } catch (e) {}
   // photo et vidéo n'ont pas toujours le même format (4:3 contre 16:9 sur Samsung) : la vidéo est le centre
@@ -1025,7 +1214,7 @@ E('scCropOk').onclick = async () => {
 };
 function backFromCrop() {
   if (revFrom) { openReview(cropIdx); return; }
-  pane('scCam'); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 200); }
+  pane('scCam'); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 80); }
 }
 
 /* ---------- Révision des pages ---------- */
@@ -1043,7 +1232,7 @@ function drawRev(jump) {
   s.innerHTML = PAGES.map((p, i) => `<div class="sl" data-i="${i}"><img src="${p.url}" alt="Page ${i + 1}"><span class="fn">${FN[p.f] || ''}</span>${PAGES.length > 1 ? `<span class="pgn">${i + 1} / ${PAGES.length}</span>` : ''}</div>`).join('');
   E('scThumbs').innerHTML = PAGES.map((p, i) => `<button data-i="${i}" class="${i === CUR ? 'on' : ''}"><img src="${p.url}" alt=""><i>${i + 1}</i></button>`).join('') + '<button class="add" id="scAdd" aria-label="Ajouter une page">＋</button>';
   E('scThumbs').querySelectorAll('button[data-i]').forEach(b => b.onclick = () => goPage(+b.dataset.i));
-  E('scAdd').onclick = () => { revFrom = false; pane('scCam'); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 200); } else camStart(); };
+  E('scAdd').onclick = () => { revFrom = false; pane('scCam'); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 80); } else camStart(); };
   drawFilt();
   E('scTL').style.display = E('scTR').style.display = PAGES.length > 1 ? '' : 'none';
   if (jump) requestAnimationFrame(() => { s.scrollLeft = CUR * s.clientWidth; });
@@ -1087,7 +1276,7 @@ E('scAdj0').onclick = async () => { const p = PAGES[CUR]; if (!p) return; p.adj 
 E('scAdjAll').onclick = async () => { const p = PAGES[CUR]; if (!p) return; busy('Réglages appliqués à toutes les pages…'); await tick(); try { for (const x of PAGES) if (x !== p) { x.adj = { ...(p.adj || {}) }; await renderPage(x); }  drawRev(true); } finally { busy(); } };
 E('scTRot').onclick = async () => { const p = PAGES[CUR]; if (!p) return; p.rot = (p.rot + 1) & 3; busy('Rotation…'); try { await redo(p); } finally { busy(); } };
 E('scTCrop').onclick = () => PAGES[CUR] && openCrop(CUR);
-E('scTRe').onclick = () => { if (!PAGES[CUR]) return; RETAKE = CUR; revFrom = false; need = null; pane('scCam'); hint(`Reprendre la page ${CUR + 1}`, true); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 200); } else camStart(); };
+E('scTRe').onclick = () => { if (!PAGES[CUR]) return; RETAKE = CUR; revFrom = false; need = null; pane('scCam'); hint(`Reprendre la page ${CUR + 1}`, true); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 80); } else camStart(); };
 const swap = (a, b) => { [PAGES[a], PAGES[b]] = [PAGES[b], PAGES[a]]; CUR = b; drawRev(true); };
 E('scTL').onclick = () => CUR > 0 && swap(CUR, CUR - 1);
 E('scTR').onclick = () => CUR < PAGES.length - 1 && swap(CUR, CUR + 1);
@@ -1095,10 +1284,10 @@ E('scTDel').onclick = async () => {
   if (!PAGES[CUR]) return;
   if (!(await ask({ title: `Supprimer la page ${CUR + 1} ?`, ok: 'Supprimer', danger: true }))) return;
   const [p] = PAGES.splice(CUR, 1); if (p.url) URL.revokeObjectURL(p.url); drawPg();
-  if (!PAGES.length) { revFrom = false; pane('scCam'); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 200); } else camStart(); return; }
+  if (!PAGES.length) { revFrom = false; pane('scCam'); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 80); } else camStart(); return; }
   CUR = Math.min(CUR, PAGES.length - 1); drawRev(true);
 };
-E('scRevBack').onclick = () => { revFrom = false; pane('scCam'); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 200); } else camStart(); };
+E('scRevBack').onclick = () => { revFrom = false; pane('scCam'); if (stream) { clearInterval(loop); loop = setInterval(liveDetect, 80); } else camStart(); };
 
 /* ---------- Enregistrement dans le coffre (chiffré) ---------- */
 const jpg = c => new Promise(ok => c.toBlob(b => b.arrayBuffer().then(a => ok(new Uint8Array(a))), 'image/jpeg', Q().jq));
@@ -1327,7 +1516,7 @@ window.scanClose = scanClose;
 // Le coffre se verrouille : on coupe la caméra et on efface les pages en mémoire
 const _lock = lockNow;
 lockNow = function () { if (open) scanClose(true); return _lock.apply(this, arguments); };
-document.addEventListener('visibilitychange', () => { if (!open) return; if (document.hidden) { clearInterval(loop); loop = null; } else if (stream && !E('scCam').classList.contains('hide')) { clearInterval(loop); loop = setInterval(liveDetect, 200); } });
+document.addEventListener('visibilitychange', () => { if (!open) return; if (document.hidden) { clearInterval(loop); loop = null; } else if (stream && !E('scCam').classList.contains('hide')) { clearInterval(loop); loop = setInterval(liveDetect, 80); } });
 window.addEventListener('resize', () => { if (open && !E('scCrop').classList.contains('hide') && cropSrc) layoutCrop(); });
 
 /* ---------- Affichage des PDF scannés dans la visionneuse (sans lecteur PDF) ---------- */
