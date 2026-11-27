@@ -286,27 +286,86 @@ SC.warp = (src, sw, sh, q, W, H) => {
   }
   return out;
 };
-// Filtres : auto, doc, vif, photo, tableau, bw, encre, gray, eco, sepia, orig — puis réglages fins et netteté
+/* ---------- Moteur « qualité Adobe Scan » (v7) ----------
+   1. Carte du papier PAR CANAL (R, V, B) : chaque bloc garde son pixel le plus clair, on élargit pour effacer le texte,
+      on écarte les zones vraiment sombres (photos, logos, bande noire) et on les remplit avec le papier voisin, puis on lisse.
+   2. Division par cette carte : ombres, dégradés et lumière jaune disparaissent, le papier devient blanc neutre.
+   3. Courbe de tons : l'encre devient noire, le texte du verso qui transparaît et le grain du papier passent au blanc.
+      Les couleurs de l'encre (cachets, signatures bleues, surligneur) sont gardées et ravivées.
+   4. Nettoyage : points isolés sur le fond, bandes sombres collées aux bords (table, doigt, ombre du téléphone). */
+SC.paper = (d, w, h) => {
+  const S = Math.max(4, Math.round(Math.max(w, h) / 360)), bw = Math.ceil(w / S), bh = Math.ceil(h / S), N = bw * bh;
+  const ch = [new Float32Array(N), new Float32Array(N), new Float32Array(N)], st = S > 8 ? 2 : 1;
+  for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) {
+    // pixel le plus clair du bloc (au 2e rang, pour ignorer un reflet isolé)
+    let m1 = -1, m2 = -1, i1 = 0, i2 = 0; const y1 = Math.min(h, (by + 1) * S), x1 = Math.min(w, (bx + 1) * S);
+    for (let y = by * S; y < y1; y += st) for (let x = bx * S; x < x1; x += st) { const i = (y * w + x) * 4, l = d[i] * .299 + d[i + 1] * .587 + d[i + 2] * .114;
+      if (l > m1) { m2 = m1; i2 = i1; m1 = l; i1 = i; } else if (l > m2) { m2 = l; i2 = i; } }
+    const i = m2 >= 0 ? i2 : i1, k = by * bw + bx; ch[0][k] = d[i]; ch[1][k] = d[i + 1]; ch[2][k] = d[i + 2];
+  }
+  // élargissement (maximum glissant séparable) : le texte, même gras ou gros, disparaît de la carte
+  const R = Math.max(2, Math.round(Math.max(bw, bh) / 55));
+  const dil = a => { const t = new Float32Array(N), o = new Float32Array(N);
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) { let m = 0; for (let k = Math.max(0, x - R); k <= Math.min(bw - 1, x + R); k++) { const v = a[y * bw + k]; if (v > m) m = v; } t[y * bw + x] = m; }
+    for (let x = 0; x < bw; x++) for (let y = 0; y < bh; y++) { let m = 0; for (let k = Math.max(0, y - R); k <= Math.min(bh - 1, y + R); k++) { const v = t[k * bw + x]; if (v > m) m = v; } o[y * bw + x] = m; }
+    return o; };
+  // on prend la luminance pour décider de l'élargissement, puis on garde la couleur du bloc retenu
+  const L = new Float32Array(N); for (let k = 0; k < N; k++) L[k] = ch[0][k] * .299 + ch[1][k] * .587 + ch[2][k] * .114;
+  const Ld = dil(L); let C = ch.map(dil);
+  for (let k = 0; k < N; k++) { const l = C[0][k] * .299 + C[1][k] * .587 + C[2][k] * .114, f = l > 1 ? Ld[k] / l : 1; if (f < 1) for (let c = 0; c < 3; c++) C[c][k] *= f; }
+  // niveau du papier sur la page entière (90e centile) ; les blocs bien plus sombres ne sont pas du papier
+  const hs = new Uint32Array(256); for (let k = 0; k < N; k++) hs[Math.min(255, Ld[k] | 0)]++;
+  let P = 255, a = 0; for (P = 255; P > 0 && (a += hs[P]) < N * .1; P--);
+  const ok = new Uint8Array(N); let nok = 0; for (let k = 0; k < N; k++) if (Ld[k] >= P * .5) { ok[k] = 1; nok++; }
+  if (nok > N * .2 && nok < N) {   // remplissage depuis le papier voisin (photo, logo noir, bord sombre)
+    let todo = N - nok, guard = bw + bh;
+    while (todo > 0 && guard-- > 0) { const nw = [];
+      for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) { const k = y * bw + x; if (ok[k]) continue;
+        let s0 = 0, s1 = 0, s2 = 0, c = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy < 0 || xx < 0 || yy >= bh || xx >= bw) continue; const j = yy * bw + xx; if (ok[j] === 1) { s0 += C[0][j]; s1 += C[1][j]; s2 += C[2][j]; c++; } }
+        if (c) nw.push([k, s0 / c, s1 / c, s2 / c]); }
+      if (!nw.length) break; nw.forEach(([k, r, g, b]) => { C[0][k] = r; C[1][k] = g; C[2][k] = b; ok[k] = 2; }); nw.forEach(([k]) => ok[k] = 1); todo -= nw.length; }
+  }
+  C = C.map(a2 => SC.blur(SC.blur(a2, bw, bh, Math.max(1, R >> 1)), bw, bh, Math.max(1, R >> 1)));
+  return { C, S, bw, bh, P };
+};
+SC.paperNorm = (d, w, h) => {   // divise chaque canal par la carte du papier → fond blanc neutre et uniforme
+  const { C, S, bw, bh } = SC.paper(d, w, h), [Cr, Cg, Cb] = C;
+  for (let y = 0; y < h; y++) {
+    const fy = Math.max(0, Math.min(bh - 1.001, y / S - .5)), y0 = fy | 0, ay = fy - y0, y1 = Math.min(bh - 1, y0 + 1);
+    for (let x = 0; x < w; x++) {
+      const fx = Math.max(0, Math.min(bw - 1.001, x / S - .5)), x0 = fx | 0, ax = fx - x0, x1 = Math.min(bw - 1, x0 + 1);
+      const a = y0 * bw + x0, b = y0 * bw + x1, c = y1 * bw + x0, e = y1 * bw + x1, i = (y * w + x) * 4;
+      const w00 = (1 - ax) * (1 - ay), w01 = ax * (1 - ay), w10 = (1 - ax) * ay, w11 = ax * ay;
+      const pr = Cr[a] * w00 + Cr[b] * w01 + Cr[c] * w10 + Cr[e] * w11, pg = Cg[a] * w00 + Cg[b] * w01 + Cg[c] * w10 + Cg[e] * w11, pb = Cb[a] * w00 + Cb[b] * w01 + Cb[c] * w10 + Cb[e] * w11;
+      const r = d[i] * 255 / Math.max(40, pr), g = d[i + 1] * 255 / Math.max(40, pg), bb = d[i + 2] * 255 / Math.max(40, pb);
+      d[i] = r > 255 ? 255 : r; d[i + 1] = g > 255 ? 255 : g; d[i + 2] = bb > 255 ? 255 : bb;
+    }
+  }
+};
+// bandes sombres collées aux bords (moins de 3 % de profondeur) : c'est la table ou une ombre, pas le document
+SC.edgeClean = (d, w, h, white = 236) => {
+  const D = Math.max(6, Math.round(Math.min(w, h) * .03)), lum = i => d[i] * .299 + d[i + 1] * .587 + d[i + 2] * .114;
+  const side = (n, len, at) => {   // n lignes perpendiculaires au bord, len profondeur max, at(ligne, pas) → index
+    for (let a = 0; a < n; a++) {
+      if (lum(at(a, 0)) >= white) continue;
+      let k = 0; while (k < len && lum(at(a, k)) < white) k++;
+      if (k <= D) for (let j = 0; j < k; j++) { const i = at(a, j); d[i] = d[i + 1] = d[i + 2] = 255; }
+    }
+  };
+  side(h, w, (y, k) => (y * w + k) * 4); side(h, w, (y, k) => (y * w + w - 1 - k) * 4);
+  side(w, h, (x, k) => (k * w + x) * 4); side(w, h, (x, k) => ((h - 1 - k) * w + x) * 4);
+};
+// fond : un point clair isolé au milieu du blanc devient blanc (grain du papier, bruit du capteur)
+SC.despeckle = (d, w, h, NL, lim = 228) => {
+  const n = w * h, white = new Uint8Array(n); for (let j = 0; j < n; j++) white[j] = NL[j] >= 246 ? 1 : 0;
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const j = y * w + x; if (white[j] || NL[j] < lim) continue;
+    const c = white[j - 1] + white[j + 1] + white[j - w] + white[j + w] + white[j - w - 1] + white[j - w + 1] + white[j + w - 1] + white[j + w + 1];
+    if (c >= 6) { const i = j * 4; d[i] = d[i + 1] = d[i + 2] = 255; } }
+};
 SC.FILTRES = [
   ['auto', 'Auto couleur'], ['doc', 'Document'], ['vif', 'Couleurs vives'], ['photo', 'Photo'], ['tableau', 'Tableau blanc'],
   ['bw', 'Noir & blanc'], ['encre', 'Texte net'], ['gray', 'Gris'], ['eco', 'Éco encre'], ['sepia', 'Ancien'], ['orig', 'Original']
 ];
-SC.illum = (d, w, h) => {   // carte d'éclairage : maximum local par bloc, élargi puis lissé
-  const S = Math.max(8, Math.round(Math.max(w, h) / 90)), bw = Math.ceil(w / S), bh = Math.ceil(h / S);
-  let m = new Float32Array(bw * bh);
-  for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) {
-    let mx = 0; const y1 = Math.min(h, (by + 1) * S), x1 = Math.min(w, (bx + 1) * S), st = S > 12 ? 2 : 1;
-    for (let y = by * S; y < y1; y += st) for (let x = bx * S; x < x1; x += st) { const i = (y * w + x) * 4, l = d[i] * .299 + d[i + 1] * .587 + d[i + 2] * .114; if (l > mx) mx = l; }
-    m[by * bw + bx] = mx;
-  }
-  for (let it = 0; it < 2; it++) { const o = new Float32Array(m.length);
-    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) { let mx = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy >= 0 && yy < bh && xx >= 0 && xx < bw && m[yy * bw + xx] > mx) mx = m[yy * bw + xx]; } o[y * bw + x] = mx; }
-    m = o; }
-  m = SC.blur(m, bw, bh, 2);
-  // carte pleine résolution par ligne (interpolation bilinéaire)
-  return (x, y) => { const fx = Math.max(0, Math.min(bw - 1.001, x / S - .5)), fy = Math.max(0, Math.min(bh - 1.001, y / S - .5)), x0 = fx | 0, y0 = fy | 0, ax = fx - x0, ay = fy - y0, x1 = Math.min(bw - 1, x0 + 1), y1 = Math.min(bh - 1, y0 + 1);
-    return (m[y0 * bw + x0] * (1 - ax) + m[y0 * bw + x1] * ax) * (1 - ay) + (m[y1 * bw + x0] * (1 - ax) + m[y1 * bw + x1] * ax) * ay; };
-};
 SC.boxMean = (g, w, h, r) => {   // moyenne locale par image intégrale
   const I = new Float64Array((w + 1) * (h + 1));
   for (let y = 0; y < h; y++) { let s = 0; for (let x = 0; x < w; x++) { s += g[y * w + x]; I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + s; } }
@@ -316,70 +375,65 @@ SC.boxMean = (g, w, h, r) => {   // moyenne locale par image intégrale
       o[y * w + x] = (I[y1 * (w + 1) + x1] - I[y0 * (w + 1) + x1] - I[y1 * (w + 1) + x0] + I[y0 * (w + 1) + x0]) / ((x1 - x0) * (y1 - y0)); } }
   return o;
 };
-SC.sharpen = (d, w, h, amt) => {   // masque flou (unsharp) sur les 3 canaux
+SC.sharpen = (d, w, h, amt, r = 1) => {   // masque flou (unsharp) sur les 3 canaux ; le blanc pur reste blanc
   if (amt <= 0 || w < 3 || h < 3) return;
   const n = w * h, ch = new Float32Array(n);
   for (let c = 0; c < 3; c++) {
     for (let i = 0; i < n; i++) ch[i] = d[i * 4 + c];
-    const b = SC.blur(ch, w, h, 1);
+    const b = SC.blur(ch, w, h, r);
     for (let i = 0; i < n; i++) { const v = ch[i] + (ch[i] - b[i]) * amt; d[i * 4 + c] = v < 0 ? 0 : v > 255 ? 255 : v; }
   }
 };
-SC.NET = { auto: .55, doc: .7, vif: .5, photo: .35, tableau: .6, bw: .5, encre: 0, gray: .6, eco: .4, sepia: .3, orig: 0 };
+SC.NET = { auto: .6, doc: .7, vif: .55, photo: .35, tableau: .6, bw: .4, encre: 0, gray: .65, eco: .4, sepia: .3, orig: 0 };
+// [noir, blanc, gamma, couleur de l'encre] — tout ce qui est plus clair que « blanc » devient papier
+SC.TONS = { auto: [62, 206, 1.08, 1.3], doc: [72, 200, 1.12, 1.05], vif: [52, 214, 1.05, 1.65], tableau: [60, 196, 1, 1.8], gray: [66, 204, 1.1, 0] };
 SC.filter = (d, w, h, mode, adj) => {
   adj = adj || {};
   const cl = v => v < 0 ? 0 : v > 255 ? 255 : v, n = w * h;
   if (mode !== 'orig') {
     const flat = mode !== 'photo' && mode !== 'sepia';
-    const ill = flat ? SC.illum(d, w, h) : null;
-    // niveaux automatiques (photo / ancien) : 1 % et 99 %
     let lo = 0, hi = 255;
-    if (!flat) { const hs = new Uint32Array(256); for (let i = 0; i < n; i += 3) hs[(d[i * 4] * .299 + d[i * 4 + 1] * .587 + d[i * 4 + 2] * .114) | 0]++;
+    if (flat) SC.paperNorm(d, w, h);
+    else {   // niveaux automatiques (photo / ancien) : 1 % et 99 %
+      const hs = new Uint32Array(256); for (let i = 0; i < n; i += 3) hs[(d[i * 4] * .299 + d[i * 4 + 1] * .587 + d[i * 4 + 2] * .114) | 0]++;
       const tot = Math.ceil(n / 3); let a = 0; for (lo = 0; lo < 255 && (a += hs[lo]) < tot * .01; lo++); a = 0; for (hi = 255; hi > 0 && (a += hs[hi]) < tot * .01; hi--); if (hi - lo < 40) { lo = 0; hi = 255; } }
-    // balance des blancs : la couleur moyenne du papier devient blanc neutre (papier jauni, lumière chaude)
-    let gr = 1, gg = 1, gb = 1;
-    if (flat && mode !== 'bw' && mode !== 'gray' && mode !== 'encre' && mode !== 'eco') {
-      let sr = 0, sg = 0, sb = 0, c = 0; const st = Math.max(1, Math.round(Math.sqrt(n / 40000)));
-      for (let y = 0; y < h; y += st) for (let x = 0; x < w; x += st) { const i = (y * w + x) * 4, k = 255 / Math.max(48, ill(x, y)), r = d[i] * k, g = d[i + 1] * k, b = d[i + 2] * k; if (r * .299 + g * .587 + b * .114 > 225) { sr += r; sg += g; sb += b; c++; } }
-      if (c > 50) { const m = (sr + sg + sb) / 3 / c; gr = Math.min(1.35, m / (sr / c)); gg = Math.min(1.35, m / (sg / c)); gb = Math.min(1.35, m / (sb / c)); }
-    }
+    const T = SC.TONS[mode], NL = flat ? new Float32Array(n) : null;
     let L = null; if (mode === 'encre') L = new Float32Array(n);
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4, k = flat ? 255 / Math.max(48, ill(x, y)) : 255 / (hi - lo), o = flat ? 0 : lo;
-      let r = (d[i] - o) * k * gr, g = (d[i + 1] - o) * k * gg, b = (d[i + 2] - o) * k * gb;
-      const l = r * .299 + g * .587 + b * .114;
-      if (mode === 'auto' || mode === 'vif' || mode === 'doc' || mode === 'tableau') {
-        const fade = l > 200 ? Math.max(0, 1 - (l - 200) / 40) : 1;   // papier : on retire la couleur parasite
-        const sat = 1 + ({ auto: .25, vif: .7, doc: .1, tableau: .9 }[mode]) * fade - (mode === 'doc' ? (1 - fade) : (1 - fade) * .6);
-        r = l + (r - l) * sat; g = l + (g - l) * sat; b = l + (b - l) * sat;
-        const [bl, ct, wp] = { auto: [28, 1.13, 230], vif: [24, 1.12, 238], doc: [40, 1.22, 226], tableau: [30, 1.25, 215] }[mode];
-        const c = v => { v = (v - bl) * ct; return v > wp ? 255 : v; };
-        d[i] = cl(c(r)); d[i + 1] = cl(c(g)); d[i + 2] = cl(c(b));
-      } else if (mode === 'photo') {
-        const sat = 1.12; d[i] = cl(l + (r - l) * sat); d[i + 1] = cl(l + (g - l) * sat); d[i + 2] = cl(l + (b - l) * sat);
-      } else if (mode === 'sepia') {
-        const v = cl(l * 1.05); d[i] = cl(v * .95 + 28); d[i + 1] = cl(v * .82 + 22); d[i + 2] = cl(v * .62 + 12);
-      } else if (mode === 'eco') {
-        let v = (l - 30) * 1.1; v = v > 225 ? 255 : 255 - (255 - cl(v)) * .55; d[i] = d[i + 1] = d[i + 2] = cl(v);
-      } else if (mode === 'encre') { L[y * w + x] = cl(l); }
-      else {
-        let v = l;
-        if (mode === 'bw') { const t = Math.max(0, Math.min(1, (v - 120) / 85)); v = 255 * t * t * (3 - 2 * t); }
-        else { v = (v - 22) * 1.12; if (v > 238) v = 255; }
-        d[i] = d[i + 1] = d[i + 2] = cl(v);
+    for (let j = 0; j < n; j++) {
+      const i = j * 4;
+      if (!flat) {
+        const k = 255 / (hi - lo), r = (d[i] - lo) * k, g = (d[i + 1] - lo) * k, b = (d[i + 2] - lo) * k, l = r * .299 + g * .587 + b * .114;
+        if (mode === 'photo') { const s = 1.12; d[i] = cl(l + (r - l) * s); d[i + 1] = cl(l + (g - l) * s); d[i + 2] = cl(l + (b - l) * s); }
+        else { const v = cl(l * 1.05); d[i] = cl(v * .95 + 28); d[i + 1] = cl(v * .82 + 22); d[i + 2] = cl(v * .62 + 12); }
+        continue;
       }
+      let r = d[i], g = d[i + 1], b = d[i + 2]; const l = r * .299 + g * .587 + b * .114;
+      if (T) {
+        const [B, Wt, ga, sat] = T; let t = (l - B) / (Wt - B); t = t <= 0 ? 0 : t >= 1 ? 1 : Math.pow(t, ga); const nl = t * 255; NL[j] = nl;
+        if (!sat) { d[i] = d[i + 1] = d[i + 2] = nl; continue; }
+        // même teinte, nouvelle luminosité ; la couleur de l'encre est ravivée, celle du papier retirée
+        const k = nl / Math.max(1, l), ink = nl < 200 ? 1 : Math.max(0, (245 - nl) / 45), s = 1 + (sat - 1) * ink - (1 - ink) * (mode === 'doc' ? 1 : .7);
+        r *= k; g *= k; b *= k; r = nl + (r - nl) * s; g = nl + (g - nl) * s; b = nl + (b - nl) * s;
+        if (nl >= 250) r = g = b = 255;
+        d[i] = cl(r); d[i + 1] = cl(g); d[i + 2] = cl(b);
+      } else if (mode === 'bw') {   // noir & blanc doux (bords lissés, pas d'escalier)
+        const t = Math.max(0, Math.min(1, (l - 112) / 80)), v = 255 * t * t * (3 - 2 * t); NL[j] = v; d[i] = d[i + 1] = d[i + 2] = v;
+      } else if (mode === 'eco') {
+        let v = (l - 40) * 1.15; v = v > 215 ? 255 : 255 - (255 - cl(v)) * .55; NL[j] = v; d[i] = d[i + 1] = d[i + 2] = cl(v);
+      } else if (mode === 'encre') { L[j] = l; NL[j] = 255; }
     }
     if (mode === 'encre') {   // seuil adaptatif local (texte très net, fond pur)
       const M = SC.boxMean(L, w, h, Math.max(6, Math.round(Math.max(w, h) / 70)));
-      for (let j = 0; j < n; j++) { const t = (L[j] - (M[j] - 14)) / 10, v = t <= 0 ? 0 : t >= 1 ? 255 : 255 * t; const v2 = L[j] > 200 ? 255 : v; d[j * 4] = d[j * 4 + 1] = d[j * 4 + 2] = v2; }
+      for (let j = 0; j < n; j++) { const t = (L[j] - (M[j] - 14)) / 10, v = t <= 0 ? 0 : t >= 1 ? 255 : 255 * t; const v2 = L[j] > 215 ? 255 : v; d[j * 4] = d[j * 4 + 1] = d[j * 4 + 2] = v2; NL[j] = v2; }
     }
+    if (flat) { SC.despeckle(d, w, h, NL); SC.edgeClean(d, w, h); }
   }
   // réglages fins : luminosité / contraste (-50..50)
   const bri = (adj.b || 0) * 1.6, con = 1 + (adj.c || 0) / 60;
   if (bri || con !== 1) for (let j = 0; j < n * 4; j += 4) for (let c = 0; c < 3; c++) d[j + c] = cl((d[j + c] - 128) * con + 128 + bri);
-  // netteté : par filtre, plus le réglage (0..100, 50 = normal)
+  // netteté : par filtre, plus le réglage (0..100, 50 = normal) ; rayon adapté à la résolution
   const net = (SC.NET[mode] || 0) * ((adj.s == null ? 50 : adj.s) / 50);
-  if (net > 0.02) SC.sharpen(d, w, h, net);
+  if (net > 0.02) SC.sharpen(d, w, h, net, Math.max(w, h) > 3000 ? 2 : 1);
 };
 
 /* ---------- Titre automatique : genre de document + numéro + émetteur + date, lu dans le texte ---------- */
@@ -845,7 +899,7 @@ const tick = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)
 let DEST = 'vault';   // 'vault' : caché dans le coffre ; 'note' : bloc-notes, comme Adobe Scan
 let QUAL = 'haute', PAGES = [], CUR = 0, FILT = 'auto', AUTO = true, stream = null, track = null, loop = null, torch = false;
 let lastQ = null, stable = 0, cool = 0, need = null, open = false, cropIdx = -1, cropQ = null, cropSrc = null, cropNew = false;
-const QUALS = { std: { cap: 2400, out: 2000, jq: .82 }, haute: { cap: 3400, out: 2800, jq: .9 }, max: { cap: 4400, out: 3800, jq: .94 } };
+const QUALS = { std: { cap: 2400, out: 2000, jq: .82 }, haute: { cap: 3600, out: 3300, jq: .92 }, max: { cap: 4600, out: 4000, jq: .95 } };
 const Q = () => QUALS[QUAL] || QUALS.haute;
 // v2 : mode de prise de vue, grille, son, vérification des bords, format de page du PDF
 let MODE = 'doc', GRID = false, SOUND = true, VERIF = false, PSIZE = 'auto', CARD = null;
